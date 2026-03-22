@@ -7,12 +7,27 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Server {
+  id   String @id @default(cuid())
+  name String @unique
+  users User[]
+}
+
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  password  String
-  username  String?
-  lastX     Float?   @default(0)
-  lastY     Float?   @default(0)
-  createdAt DateTime @default(now())
+  id           String    @id @default(cuid())
+  email        String    @unique
+  password     String
+  username     String    @unique
+  currentServerId String?
+  currentServer   Server?   @relation(fields: [currentServerId], references: [id])
+  character    Character?
+}
+
+model Character {
+  id       String  @id @default(cuid())
+  userId   String  @unique
+  user     User    @relation(fields: [userId], references: [id])
+  color    String  @default("#3498db")
+  hat      String?
+  facewear String?
 }
