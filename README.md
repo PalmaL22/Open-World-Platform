@@ -1,0 +1,1 @@
+# Setup for the Open World project
