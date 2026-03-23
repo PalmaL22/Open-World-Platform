@@ -101,6 +101,26 @@ authRouter.post("/login", async (req, res) => {
   }
 });
 
-authRouter.get("/me", authMiddleware, (_req, res) => {
-  res.json({ ok: true });
+// Still deciding if we want to send the user info or just token validation for this route
+authRouter.get("/me", authMiddleware, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId },
+      include: { character: true },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json({
+      id: user.id,
+      username: user.username,
+      character: user.character,
+    });
+
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to load user" });
+  }
 });
