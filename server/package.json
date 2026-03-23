@@ -6,6 +6,7 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
+    "dev": "tsx watch src/index.ts",
     "db-generate": "prisma generate",
     "db-put": "prisma db push",
     "db-server": "tsx prisma/seed.ts",
@@ -13,7 +14,7 @@
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.5.0",
-    "@prisma/client": "^5.22.0",
+    "@prisma/client": "^6.12.0",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
