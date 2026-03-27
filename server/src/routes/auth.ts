@@ -3,7 +3,6 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { prisma } from "../lib/prisma.js";
 import { authMiddleware } from "../middleware/auth.js";
-import { authMeRateLimiter } from "../middleware/rateLimit.js";
 
 export const authRouter = Router();
 
@@ -103,7 +102,7 @@ authRouter.post("/login", async (req, res) => {
 });
 
 // Still deciding if we want to send the user info or just token validation for this route
-authRouter.get("/me", authMeRateLimiter, authMiddleware, async (req, res) => {
+authRouter.get("/me", authMiddleware, async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.userId },

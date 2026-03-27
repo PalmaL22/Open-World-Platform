@@ -6,9 +6,9 @@ export function registerSocketHandlers(io: Server) {
     socket.on("join-server", (payload: { serverId: string }) => {
       const serverId = payload?.serverId;
 
-      if (!payload || !payload.serverId)  {
-         console.error("Server ID is required");
-         return;
+      if (!serverId){
+        console.warn("Server ID is required");
+        return;
       }
 
       const room = roomForServer(serverId);
@@ -21,13 +21,25 @@ export function registerSocketHandlers(io: Server) {
 
     socket.on("leave-server", (payload: { serverId: string }) => {
       const serverId = payload?.serverId;
-      if (!serverId) return;
+      if (!serverId) {
+        console.warn("Server ID is required");
+        return;
+      }
+      
       void socket.leave(roomForServer(serverId));
     });
 
     socket.on("player-move", (payload: { serverId: string; x: number; y: number }) => {
       const serverId = payload?.serverId;
-      if (serverId == null || payload.x == null || payload.y == null) return;
+
+      if (!serverId) {
+        console.warn("Server ID is required");
+        return;
+      } else if (payload.x == null || payload.y == null) { // null because !payload.x would trigger for 0 x or y values
+        console.warn("X and Y are required", payload.x, payload.y, "for server", serverId);
+        return;
+      }
+
       socket.to(roomForServer(serverId)).emit("player-moved", {
         socketId: socket.id,
         x: payload.x,
@@ -41,10 +53,6 @@ export function registerSocketHandlers(io: Server) {
   });
 }
 
-// Helper function to get the room for a server
 function roomForServer(serverId: string) {
   return `server:${serverId}`;
 }
-
-
-// Note finish movement and leaving sever logic
