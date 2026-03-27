@@ -5,11 +5,10 @@ import rateLimit from "express-rate-limit";
 import { Server } from "socket.io";
 import { authRouter } from "./routes/auth.js";
 import { registerSocketHandlers } from "./socket/socketHandler.js";
+import { CLIENT_ORIGIN, PORT } from "./types/env.js";
 
 const app = express();
-const PORT = Number(process.env.PORT) || 3001;
-
-const corsOrigin = process.env.CLIENT_ORIGIN === undefined ? true : process.env.CLIENT_ORIGIN;
+const corsOrigin = CLIENT_ORIGIN;
 
 app.use(cors({ origin: corsOrigin }));
 app.use(express.json());

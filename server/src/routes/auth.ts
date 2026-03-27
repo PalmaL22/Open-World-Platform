@@ -2,12 +2,10 @@ import { Router } from "express";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { prisma } from "../lib/prisma.js";
-import { authMiddleware } from "../middleware/auth.js";
+import { authMiddleware } from "../middleware/authMiddleware.js";
+import { JWT_SECRET } from "../types/env.js";
 
 export const authRouter = Router();
-
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) throw new Error("No key found");
 
 const SALT_ROUNDS = 10;
 
