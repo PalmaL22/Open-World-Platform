@@ -8,7 +8,9 @@ import { JWT_SECRET } from "../types/env.js";
 export const authRouter = Router();
 
 const SALT_ROUNDS = 10;
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_MAX_LENGTH = 100;
+const EMAIL_LOCAL_MAX_LENGTH = 60;
+const EMAIL_LABEL_MAX_LENGTH = 60;
 const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,20}$/;
 const PASSWORD_MIN_LENGTH = 8;
 const PASSWORD_MAX_LENGTH = 30; 
@@ -155,9 +157,47 @@ type CredentialValidationResult =
   | { ok: true; email: string; password: string; username?: string }
   | { ok: false; error: string };
 
+function emailTokenOk(s: string): boolean {
+  for (const ch of s) {
+    if (ch === "@" || /\s/u.test(ch)) return false;
+  }
+  return true;
+}
+
+function isValidEmail(email: string): boolean {
+  if (email.length === 0 || email.length > EMAIL_MAX_LENGTH) {
+    return false;
+  }
+  const at = email.indexOf("@");
+  if (at <= 0 || email.indexOf("@", at + 1) !== -1) {
+    return false;
+  }
+  const local = email.slice(0, at);
+  const domain = email.slice(at + 1);
+  if (local.length > EMAIL_LOCAL_MAX_LENGTH || domain.length === 0) {
+    return false;
+  }
+  if (!emailTokenOk(local)) {
+    return false;
+  }
+  const labels = domain.split(".");
+  if (labels.length < 2) {
+    return false;
+  }
+  for (const label of labels) {
+    if (label.length === 0 || label.length > EMAIL_LABEL_MAX_LENGTH) {
+      return false;
+    }
+    if (!emailTokenOk(label)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function validateCredentials(input: CredentialValidationInput): CredentialValidationResult {
   const normalizedEmail = input.email.trim().toLowerCase();
-  if (!EMAIL_REGEX.test(normalizedEmail)) {
+  if (!isValidEmail(normalizedEmail)) {
     return { ok: false, error: "Invalid email format" };
   }
 
