@@ -8,25 +8,38 @@ import { JWT_SECRET } from "../types/env.js";
 export const authRouter = Router();
 
 const SALT_ROUNDS = 10;
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,20}$/;
+const PASSWORD_MIN_LENGTH = 8;
+const PASSWORD_MAX_LENGTH = 30; 
 
 authRouter.post("/register", async (req, res) => {
   try {
-    const { email, password, username, characterColor } = req.body;
+    const { email, password, username, characterColor } = req.body as {
+      email?: unknown;
+      password?: unknown;
+      username?: unknown;
+      characterColor?: unknown;
+    };
 
-    if (!email || !password || !username) {
+    if (typeof email !== "string" || typeof password !== "string" || typeof username !== "string") {
       return res.status(400).json({ error: "Email, password, and username are required" });
     }
+
+    const validation = validateCredentials({ email, password, username, requireUsername: true });
+    if (!validation.ok) return res.status(400).json({ error: validation.error });
+    if (!validation.username) return res.status(400).json({ error: "Invalid username" });
 
     const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
     const user = await prisma.user.create({
       data: {
-        email,
+        email: validation.email,
         password: hashedPassword,
-        username,
+        username: validation.username,
         character: {
           create: {
-            color: characterColor ?? "#3498db",
+            color: typeof characterColor === "string" ? characterColor : "#3498db",
           },
         },
       },
@@ -62,18 +75,26 @@ authRouter.post("/register", async (req, res) => {
 
 authRouter.post("/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password } = req.body as { email?: unknown; password?: unknown };
 
-    if (!email){
+    if (typeof email !== "string") {
       return res.status(400).json({ error: "Email is required" });
-    }
-    else if (!password) {
+    } else if (typeof password !== "string") {
       return res.status(400).json({ error: "Password is required" });
+    }
+
+    if (password.length < PASSWORD_MIN_LENGTH || password.length > PASSWORD_MAX_LENGTH) {
+      return res.status(400).json({ error: "Invalid email or password" });
+    }
+
+    const validation = validateCredentials({ email, password });
+    if (!validation.ok) {
+      return res.status(400).json({ error: validation.error });
     }
 
     // Find the user by email with prisma client
     const user = await prisma.user.findUnique({
-      where: { email },
+      where: { email: validation.email },
       include: { character: true },
     });
 
@@ -122,3 +143,42 @@ authRouter.get("/me", authMiddleware, async (req, res) => {
     res.status(500).json({ error: "Failed to load user" });
   }
 });
+
+type CredentialValidationInput = {
+  email: string;
+  password: string;
+  username?: string;
+  requireUsername?: boolean;
+};
+
+type CredentialValidationResult =
+  | { ok: true; email: string; password: string; username?: string }
+  | { ok: false; error: string };
+
+function validateCredentials(input: CredentialValidationInput): CredentialValidationResult {
+  const normalizedEmail = input.email.trim().toLowerCase();
+  if (!EMAIL_REGEX.test(normalizedEmail)) {
+    return { ok: false, error: "Invalid email format" };
+  }
+
+  if (input.password.length < PASSWORD_MIN_LENGTH || input.password.length > PASSWORD_MAX_LENGTH) {
+    return {
+      ok: false,
+      error: "Password must be between 8 and 30 characters long",
+    };
+  }
+
+  if (input.requireUsername) {
+    const normalizedUsername = input.username?.trim() ?? "";
+    if (!USERNAME_REGEX.test(normalizedUsername)) {
+      return {
+        ok: false,
+        error: "Username must be 3-20 characters and use letters, numbers, or underscores only",
+      };
+    }
+
+    return { ok: true, email: normalizedEmail, password: input.password, username: normalizedUsername };
+  }
+
+  return { ok: true, email: normalizedEmail, password: input.password };
+}
