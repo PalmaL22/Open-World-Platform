@@ -6,9 +6,11 @@ import { MainScene } from "./mainScene";
 type GameCanvasProps = {
   socket: Socket;
   serverId: string;
+  /** Saved character color from the server (`#rrggbb`) */
+  characterColor: string;
 };
 
-export function GameCanvas({ socket, serverId }: GameCanvasProps) {
+export function GameCanvas({ socket, serverId, characterColor }: GameCanvasProps) {
   const parentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -38,12 +40,16 @@ export function GameCanvas({ socket, serverId }: GameCanvasProps) {
       },
     });
 
-    game.scene.add("MainScene", MainScene, true, { socket, serverId });
+    game.scene.add("MainScene", MainScene, true, {
+      socket,
+      serverId,
+      localColorHex: characterColor,
+    });
 
     return () => {
       game.destroy(true);
     };
-  }, [socket, serverId]);
+  }, [socket, serverId, characterColor]);
 
   return (
     <div
