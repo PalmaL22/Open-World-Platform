@@ -94,13 +94,11 @@ authRouter.post("/login", async (req, res) => {
       return res.status(400).json({ error: validation.error });
     }
 
-    // Find the user by email with prisma client
     const user = await prisma.user.findUnique({
       where: { email: validation.email },
       include: { character: true },
     });
 
-    // Future question: should we check if the user exists and then compare the password? or would this bring vulnerabilities?
     if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({ error: "Invalid email or password" });
     }
@@ -122,7 +120,6 @@ authRouter.post("/login", async (req, res) => {
   }
 });
 
-// Still deciding if we want to send the user info or just token validation for this route
 authRouter.get("/me", authMiddleware, async (req, res) => {
   try {
     const user = await prisma.user.findUnique({

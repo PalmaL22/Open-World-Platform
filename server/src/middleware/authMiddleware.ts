@@ -9,7 +9,6 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
       ? authHeader.slice(7)
       : null;
 
-  // future question: should we thrown an error for missing and a separate error for invalid?
   if (!token) {
     return res.status(401).json({ error: "Missing or invalid token" });
   }

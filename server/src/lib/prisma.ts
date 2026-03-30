@@ -1,4 +1,3 @@
-// Load server/.env before Prisma Client
 import { PrismaPg } from "@prisma/adapter-pg";
 import dotenv from "dotenv";
 import path from "path";
@@ -9,7 +8,6 @@ dotenv.config({
   path: path.join(path.dirname(fileURLToPath(import.meta.url)), "../../.env"),
 });
 
-// For convenience, to avoid multiple instances of Prisma Client in development
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 
 const databaseUrl = process.env.DATABASE_URL;
