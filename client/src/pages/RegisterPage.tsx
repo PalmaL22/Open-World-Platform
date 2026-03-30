@@ -1,7 +1,8 @@
 import { FormEvent, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { register as registerRequest } from "../api/auth";
-import { isValidEmailFormat } from "../lib/email";
+import { AuthShell } from "../components/AuthShell";
+import { isValidRegistrationEmail } from "../lib/email";
 import { useAuthStore } from "../store/authStore";
 
 export function RegisterPage() {
@@ -23,9 +24,9 @@ export function RegisterPage() {
     e.preventDefault();
     setError(null);
     const trimmedEmail = email.trim().toLowerCase();
-    if (!isValidEmailFormat(trimmedEmail)) {
+    if (!isValidRegistrationEmail(trimmedEmail)) {
       setError(
-        "Enter a valid email with a domain and TLD (e.g. name@gmail.com).",
+        "Please enter a valid email address from a supported provider (e.g., Gmail, Outlook, Yahoo, Hotmail, iCloud, etc).",
       );
       return;
     }
@@ -46,21 +47,19 @@ export function RegisterPage() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-md flex-col gap-8 px-4 py-16">
-      <div>
-        <h1 className="text-2xl font-semibold text-white">Create account</h1>
-        <p className="mt-2 text-sm text-slate-400">
-          Email, password, and a unique username (3–20 letters, numbers, underscores).
-        </p>
-      </div>
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+    <AuthShell
+      eyebrow="Join the platform"
+      title="Create account"
+      description="Set up your profile for live events and open-world rooms. Username: 3–20 letters, numbers, or underscores."
+    >
+      <form onSubmit={handleSubmit} className="flex flex-col gap-5">
         {error ? (
-          <p className="rounded-md border border-red-900/60 bg-red-950/40 px-3 py-2 text-sm text-red-200">
+          <p className="rounded-lg border border-red-500/30 bg-red-950/50 px-3 py-2.5 text-sm text-red-100">
             {error}
           </p>
         ) : null}
         <div>
-          <label htmlFor="reg-email" className="mb-1 block text-sm text-slate-300">
+          <label htmlFor="reg-email" className="label-auth">
             Email
           </label>
           <input
@@ -70,11 +69,11 @@ export function RegisterPage() {
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 placeholder:text-slate-500 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+            className="input-auth"
           />
         </div>
         <div>
-          <label htmlFor="reg-password" className="mb-1 block text-sm text-slate-300">
+          <label htmlFor="reg-password" className="label-auth">
             Password
           </label>
           <input
@@ -86,12 +85,12 @@ export function RegisterPage() {
             maxLength={30}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 placeholder:text-slate-500 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+            className="input-auth"
           />
-          <p className="mt-1 text-xs text-slate-500">8–30 characters.</p>
+          <p className="mt-1.5 text-xs text-slate-500">8–30 characters.</p>
         </div>
         <div>
-          <label htmlFor="reg-username" className="mb-1 block text-sm text-slate-300">
+          <label htmlFor="reg-username" className="label-auth">
             Username
           </label>
           <input
@@ -104,11 +103,11 @@ export function RegisterPage() {
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             placeholder="player_name"
-            className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 placeholder:text-slate-500 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+            className="input-auth"
           />
         </div>
         <div>
-          <label htmlFor="reg-color" className="mb-1 block text-sm text-slate-300">
+          <label htmlFor="reg-color" className="label-auth">
             Character color
           </label>
           <input
@@ -116,23 +115,19 @@ export function RegisterPage() {
             type="color"
             value={characterColor}
             onChange={(e) => setCharacterColor(e.target.value)}
-            className="h-10 w-full cursor-pointer rounded-md border border-slate-700 bg-slate-900"
+            className="h-11 w-full cursor-pointer rounded-lg border border-slate-600/80 bg-slate-950/50 p-1 shadow-inner"
           />
         </div>
-        <button
-          type="submit"
-          disabled={loading}
-          className="rounded-md bg-sky-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-60"
-        >
+        <button type="submit" disabled={loading} className="btn-primary mt-1 w-full">
           {loading ? "Creating account…" : "Create account"}
         </button>
       </form>
-      <p className="text-center text-sm text-slate-500">
+      <p className="mt-6 text-center text-sm text-slate-500">
         Already have an account?{" "}
-        <Link to="/login" className="text-sky-400 hover:text-sky-300">
+        <Link to="/login" className="font-medium text-amber-300/90 hover:text-amber-200">
           Sign in
         </Link>
       </p>
-    </div>
+    </AuthShell>
   );
 }

@@ -1,6 +1,30 @@
 const EMAIL_MAX_LENGTH = 100;
 const EMAIL_LOCAL_MAX_LENGTH = 60;
 const EMAIL_LABEL_MAX_LENGTH = 60;
+const ALLOWED_PUBLIC_EMAIL_DOMAINS = new Set([
+  "gmail.com",
+  "outlook.com",
+  "hotmail.com",
+  "live.com",
+  "msn.com",
+  "yahoo.com",
+  "ymail.com",
+  "rocketmail.com",
+  "icloud.com",
+  "me.com",
+  "mac.com",
+  "aol.com",
+  "proton.me",
+  "protonmail.com",
+  "pm.me",
+  "zoho.com",
+  "gmx.com",
+  "mail.com",
+  "yandex.com",
+  "yandex.ru",
+  "fastmail.com",
+  "hey.com",
+]);
 
 function isLocalPartOk(local: string): boolean {
   if (local.length === 0 || local.length > EMAIL_LOCAL_MAX_LENGTH) return false;
@@ -51,4 +75,16 @@ export function isValidEmailFormat(email: string): boolean {
   if (!domainNonTldLabelsSubstantial(labels)) return false;
 
   return true;
+}
+
+export function isAllowedPublicEmailDomain(email: string): boolean {
+  const normalized = email.trim().toLowerCase();
+  const at = normalized.lastIndexOf("@");
+  if (at <= 0 || at === normalized.length - 1) return false;
+  const domain = normalized.slice(at + 1);
+  return ALLOWED_PUBLIC_EMAIL_DOMAINS.has(domain);
+}
+
+export function isValidRegistrationEmail(email: string): boolean {
+  return isValidEmailFormat(email) && isAllowedPublicEmailDomain(email);
 }

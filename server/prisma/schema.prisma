@@ -14,20 +14,20 @@ model Server {
 }
 
 model User {
-  id           String    @id @default(cuid())
-  email        String    @unique
-  password     String
-  username     String    @unique
+  id              String     @id @default(cuid())
+  email           String     @unique
+  password        String
+  username        String     @unique
   currentServerId String?
-  currentServer   Server?   @relation(fields: [currentServerId], references: [id])
-  character    Character?
+  character       Character?
+  currentServer   Server?    @relation(fields: [currentServerId], references: [id])
 }
 
 model Character {
   id       String  @id @default(cuid())
   userId   String  @unique
-  user     User    @relation(fields: [userId], references: [id])
   color    String  @default("#3498db")
   hat      String?
   facewear String?
+  user     User    @relation(fields: [userId], references: [id])
 }
