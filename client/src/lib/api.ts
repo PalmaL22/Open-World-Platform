@@ -1,0 +1,61 @@
+import axios from "axios";
+import { getApiOrigin } from "./apiOrigin";
+import { useAuthStore } from "../store/authStore";
+
+const base = getApiOrigin();
+
+export const api = axios.create({
+  baseURL: base || undefined,
+  headers: { "Content-Type": "application/json" },
+});
+
+api.interceptors.request.use((config) => {
+  const token = useAuthStore.getState().token;
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+/** Same fields as `req.body` in `authRouter.post("/register")` — server/src/routes/auth.ts */
+export type RegisterPayload = {
+  email: string;
+  password: string;
+  username: string;
+  characterColor?: string;
+};
+
+export type AuthResult = {
+  token: string;
+  user: { id: string; username: string };
+};
+
+/** Calls `POST /api/auth/register` → `authRouter.post("/register", ...)` */
+export async function registerAccount(payload: RegisterPayload): Promise<AuthResult> {
+  const { data } = await api.post<AuthResult>("/api/auth/register", payload);
+  return data;
+}
+
+/** Same fields as `req.body` in `authRouter.post("/login")` — server/src/routes/auth.ts */
+export type LoginPayload = {
+  email: string;
+  password: string;
+};
+
+/** Calls `POST /api/auth/login` → `authRouter.post("/login", ...)` */
+export async function loginAccount(payload: LoginPayload): Promise<AuthResult> {
+  const { data } = await api.post<AuthResult>("/api/auth/login", payload);
+  return data;
+}
+
+export type LobbyServer = {
+  id: string;
+  name: string;
+  maxCapacity: number;
+  playerCount: number;
+};
+
+export async function fetchServerList(): Promise<LobbyServer[]> {
+  const { data } = await api.get<{ servers: LobbyServer[] }>("/api/servers/server-list");
+  return data.servers;
+}
