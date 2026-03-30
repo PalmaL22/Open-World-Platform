@@ -1,6 +1,7 @@
 import { Router } from "express";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import { PrismaClientKnownRequestError } from "@prisma/client/runtime/client";
 import { prisma } from "../lib/prisma.js";
 import { authMiddleware } from "../middleware/authMiddleware.js";
 import { JWT_SECRET } from "../types/env.js";
@@ -16,6 +17,9 @@ const PASSWORD_MIN_LENGTH = 8;
 const PASSWORD_MAX_LENGTH = 30; 
 
 authRouter.post("/register", async (req, res) => {
+  let normalizedEmail: string | undefined;
+  let normalizedUsername: string | undefined;
+
   try {
     const { email, password, username, characterColor } = req.body as {
       email?: unknown;
@@ -31,6 +35,9 @@ authRouter.post("/register", async (req, res) => {
     const validation = validateCredentials({ email, password, username, requireUsername: true });
     if (!validation.ok) return res.status(400).json({ error: validation.error });
     if (!validation.username) return res.status(400).json({ error: "Invalid username" });
+
+    normalizedEmail = validation.email;
+    normalizedUsername = validation.username;
 
     const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
@@ -60,14 +67,9 @@ authRouter.post("/register", async (req, res) => {
     });
 
   } catch (e: unknown) {
-    if (e && typeof e === "object" && "code" in e && e.code === "P2002") {
-      const meta = "meta" in e ? (e.meta as { target?: string[] }) : null;
-      const target = meta?.target?.[0];
-
-      if (target === "email") 
-        return res.status(400).json({ error: "Email already taken" });
-      else if (target === "username") 
-        return res.status(400).json({ error: "Username already taken" });
+    if (e instanceof PrismaClientKnownRequestError && e.code === "P2002") {
+      const message = await registrationDuplicateMessage(e, normalizedEmail, normalizedUsername);
+      return res.status(400).json({ error: message });
     }
 
     console.error(e);
@@ -146,6 +148,44 @@ authRouter.get("/me", authMiddleware, async (req, res) => {
   }
 });
 
+/** Prisma P2002 `meta.target`: field name(s) that violated a unique constraint. */
+function p2002UniqueFields(meta: unknown): string[] {
+  if (!meta || typeof meta !== "object" || !("target" in meta)) return [];
+  const t = (meta as { target?: unknown }).target;
+  if (Array.isArray(t)) return t.filter((x): x is string => typeof x === "string");
+  if (typeof t === "string") return [t];
+  return [];
+}
+
+async function registrationDuplicateMessage(
+  e: PrismaClientKnownRequestError,
+  email: string | undefined,
+  username: string | undefined,
+): Promise<string> {
+  const fields = p2002UniqueFields(e.meta);
+  if (fields.includes("email")) {
+    return "An account with this email already exists. Sign in instead.";
+  }
+  if (fields.includes("username")) {
+    return "This username is already taken. Choose a different one.";
+  }
+
+  if (email && username) {
+    const [existingEmail, existingUsername] = await Promise.all([
+      prisma.user.findUnique({ where: { email }, select: { id: true } }),
+      prisma.user.findUnique({ where: { username }, select: { id: true } }),
+    ]);
+    if (existingEmail) {
+      return "An account with this email already exists. Sign in instead.";
+    }
+    if (existingUsername) {
+      return "This username is already taken. Choose a different one.";
+    }
+  }
+
+  return "This email or username is already registered. Try signing in or pick a different username.";
+}
+
 type CredentialValidationInput = {
   email: string;
   password: string;
@@ -157,41 +197,60 @@ type CredentialValidationResult =
   | { ok: true; email: string; password: string; username?: string }
   | { ok: false; error: string };
 
-function emailTokenOk(s: string): boolean {
-  for (const ch of s) {
-    if (ch === "@" || /\s/u.test(ch)) return false;
+/** Local part: letters, digits, and common Gmail-safe symbols; no leading/trailing specials. */
+function isLocalPartOk(local: string): boolean {
+  if (local.length === 0 || local.length > EMAIL_LOCAL_MAX_LENGTH) return false;
+  if (local.length === 1) return /^[a-zA-Z0-9]$/.test(local);
+  return /^[a-zA-Z0-9][a-zA-Z0-9._%+-]*[a-zA-Z0-9]$/i.test(local);
+}
+
+/** DNS hostname label (letters, digits, hyphens; no leading/trailing hyphen). */
+function isDomainLabelOk(label: string): boolean {
+  if (label.length === 0 || label.length > EMAIL_LABEL_MAX_LENGTH) return false;
+  if (label.length === 1) return /^[a-z0-9]$/i.test(label);
+  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/i.test(label);
+}
+
+/**
+ * Rejects junk like `gus@g.com` (single-letter “site” + .com).
+ * Every label before the TLD must be at least 2 chars, except known real two-label domains.
+ */
+const TWO_LABEL_SINGLE_CHAR_FIRST_OK = new Set([
+  "g.co",
+  "t.co",
+  "x.com",
+]);
+
+function domainNonTldLabelsSubstantial(labels: string[]): boolean {
+  const domain = labels.join(".");
+  if (labels.length === 2 && TWO_LABEL_SINGLE_CHAR_FIRST_OK.has(domain)) {
+    return true;
+  }
+  for (let i = 0; i < labels.length - 1; i++) {
+    if (labels[i]!.length < 2) return false;
   }
   return true;
 }
 
 function isValidEmail(email: string): boolean {
-  if (email.length === 0 || email.length > EMAIL_MAX_LENGTH) {
-    return false;
-  }
+  if (email.length === 0 || email.length > EMAIL_MAX_LENGTH) return false;
   const at = email.indexOf("@");
-  if (at <= 0 || email.indexOf("@", at + 1) !== -1) {
-    return false;
-  }
+  if (at <= 0 || email.indexOf("@", at + 1) !== -1) return false;
   const local = email.slice(0, at);
   const domain = email.slice(at + 1);
-  if (local.length > EMAIL_LOCAL_MAX_LENGTH || domain.length === 0) {
-    return false;
-  }
-  if (!emailTokenOk(local)) {
-    return false;
-  }
+  if (domain.length === 0) return false;
+  if (!isLocalPartOk(local)) return false;
+
   const labels = domain.split(".");
-  if (labels.length < 2) {
-    return false;
-  }
+  if (labels.length < 2) return false;
   for (const label of labels) {
-    if (label.length === 0 || label.length > EMAIL_LABEL_MAX_LENGTH) {
-      return false;
-    }
-    if (!emailTokenOk(label)) {
-      return false;
-    }
+    if (!isDomainLabelOk(label)) return false;
   }
+
+  const tld = labels[labels.length - 1]!;
+  if (tld.length < 2) return false;
+  if (!domainNonTldLabelsSubstantial(labels)) return false;
+
   return true;
 }
 

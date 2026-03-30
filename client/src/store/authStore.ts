@@ -1,9 +1,17 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+export interface Character {
+  id: string;
+  color: string;
+  hat?: string | null;
+  facewear?: string | null;
+}
+
 export interface AuthUser {
   id: string;
   username: string;
+  character?: Character | null;
 }
 
 interface AuthState {
