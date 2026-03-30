@@ -24,7 +24,6 @@ function fillForSocketId(socketId: string): number {
   return (0x5a5a5a + (Math.abs(h) % 0xa0a0a0)) & 0xffffff;
 }
 
-/** HTML `#rrggbb` → Phaser fill color integer */
 function hexStringToPhaserColor(hex: string): number {
   const s = hex.trim();
   if (/^#[0-9a-fA-F]{6}$/u.test(s)) {

@@ -6,7 +6,6 @@ import { MainScene } from "./mainScene";
 type GameCanvasProps = {
   socket: Socket;
   serverId: string;
-  /** Saved character color from the server (`#rrggbb`) */
   characterColor: string;
 };
 

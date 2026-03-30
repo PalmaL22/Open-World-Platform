@@ -2,10 +2,6 @@ import { type ReactNode, useEffect, useState } from "react";
 import { fetchMe } from "../api/auth";
 import { useAuthStore } from "../store/authStore";
 
-/**
- * After persisted state rehydrates, validates the JWT against GET /api/auth/me.
- * Blocks children until hydration (and optional validation) finishes.
- */
 export function AuthBootstrap({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
 

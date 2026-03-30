@@ -145,7 +145,6 @@ authRouter.get("/me", authMiddleware, async (req, res) => {
   }
 });
 
-/** Prisma P2002 `meta.target`: field name(s) that violated a unique constraint. */
 function p2002UniqueFields(meta: unknown): string[] {
   if (!meta || typeof meta !== "object" || !("target" in meta)) return [];
   const t = (meta as { target?: unknown }).target;
@@ -194,24 +193,18 @@ type CredentialValidationResult =
   | { ok: true; email: string; password: string; username?: string }
   | { ok: false; error: string };
 
-/** Local part: letters, digits, and common Gmail-safe symbols; no leading/trailing specials. */
 function isLocalPartOk(local: string): boolean {
   if (local.length === 0 || local.length > EMAIL_LOCAL_MAX_LENGTH) return false;
   if (local.length === 1) return /^[a-zA-Z0-9]$/.test(local);
   return /^[a-zA-Z0-9][a-zA-Z0-9._%+-]*[a-zA-Z0-9]$/i.test(local);
 }
 
-/** DNS hostname label (letters, digits, hyphens; no leading/trailing hyphen). */
 function isDomainLabelOk(label: string): boolean {
   if (label.length === 0 || label.length > EMAIL_LABEL_MAX_LENGTH) return false;
   if (label.length === 1) return /^[a-z0-9]$/i.test(label);
   return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/i.test(label);
 }
 
-/**
- * Rejects junk like `gus@g.com` (single-letter “site” + .com).
- * Every label before the TLD must be at least 2 chars, except known real two-label domains.
- */
 const TWO_LABEL_SINGLE_CHAR_FIRST_OK = new Set([
   "g.co",
   "t.co",

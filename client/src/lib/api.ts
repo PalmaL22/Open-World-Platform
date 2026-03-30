@@ -4,7 +4,6 @@ import { useAuthStore } from "../store/authStore";
 
 const base = getApiOrigin();
 
-/** HTTP API origin (same as axios `baseURL`) — used by `fetch` helpers in `src/api/auth.ts`. */
 export const API_URL = base;
 
 export const api = axios.create({

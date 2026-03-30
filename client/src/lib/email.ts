@@ -1,5 +1,3 @@
-/** Mirrors server `isValidEmail` — use before submit for fast feedback. */
-
 const EMAIL_MAX_LENGTH = 100;
 const EMAIL_LOCAL_MAX_LENGTH = 60;
 const EMAIL_LABEL_MAX_LENGTH = 60;
@@ -16,7 +14,6 @@ function isDomainLabelOk(label: string): boolean {
   return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/i.test(label);
 }
 
-/** Keep in sync with server `routes/auth.ts` */
 const TWO_LABEL_SINGLE_CHAR_FIRST_OK = new Set([
   "g.co",
   "t.co",
