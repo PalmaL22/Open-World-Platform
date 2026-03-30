@@ -3,6 +3,7 @@ import { Link, Navigate, useLocation } from "react-router-dom";
 import type { Location } from "react-router-dom";
 import { login as loginRequest } from "../api/auth";
 import { isValidEmailFormat } from "../lib/email";
+import { AuthShell } from "../components/AuthShell";
 import { useAuthStore } from "../store/authStore";
 
 export function LoginPage() {
@@ -46,19 +47,19 @@ export function LoginPage() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-md flex-col gap-8 px-4 py-16">
-      <div>
-        <h1 className="text-2xl font-semibold text-white">Sign in</h1>
-        <p className="mt-2 text-sm text-slate-400">Use your email and password.</p>
-      </div>
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+    <AuthShell
+      eyebrow="Welcome back"
+      title="Sign in"
+      description="Enter the lobby and join live spaces—conferences, meetups, and open-world sessions."
+    >
+      <form onSubmit={handleSubmit} className="flex flex-col gap-5">
         {error ? (
-          <p className="rounded-md border border-red-900/60 bg-red-950/40 px-3 py-2 text-sm text-red-200">
+          <p className="rounded-lg border border-red-500/30 bg-red-950/50 px-3 py-2.5 text-sm text-red-100">
             {error}
           </p>
         ) : null}
         <div>
-          <label htmlFor="email" className="mb-1 block text-sm text-slate-300">
+          <label htmlFor="email" className="label-auth">
             Email
           </label>
           <input
@@ -68,11 +69,11 @@ export function LoginPage() {
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 placeholder:text-slate-500 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+            className="input-auth"
           />
         </div>
         <div>
-          <label htmlFor="password" className="mb-1 block text-sm text-slate-300">
+          <label htmlFor="password" className="label-auth">
             Password
           </label>
           <input
@@ -82,23 +83,19 @@ export function LoginPage() {
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 placeholder:text-slate-500 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+            className="input-auth"
           />
         </div>
-        <button
-          type="submit"
-          disabled={loading}
-          className="rounded-md bg-sky-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-60"
-        >
+        <button type="submit" disabled={loading} className="btn-primary mt-1 w-full">
           {loading ? "Signing in…" : "Sign in"}
         </button>
       </form>
-      <p className="text-center text-sm text-slate-500">
+      <p className="mt-6 text-center text-sm text-slate-500">
         No account?{" "}
-        <Link to="/register" className="text-sky-400 hover:text-sky-300">
-          Register
+        <Link to="/register" className="font-medium text-amber-300/90 hover:text-amber-200">
+          Create one
         </Link>
       </p>
-    </div>
+    </AuthShell>
   );
 }
