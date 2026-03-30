@@ -7,9 +7,10 @@ datasource db {
 }
 
 model Server {
-  id   String @id @default(cuid())
-  name String @unique
-  users User[]
+  id          String @id @default(cuid())
+  name        String @unique
+  maxCapacity Int    @default(32)
+  users       User[]
 }
 
 model User {
