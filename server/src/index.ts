@@ -32,7 +32,6 @@ app.get("/", (_, res) =>
 
 app.get("/api/health", (_, res) => res.json({ ok: true }));
 
-// Routes
 app.use("/api/auth", createAuthRateLimiter(), authRouter);
 app.use("/api/servers", createServersRateLimiter(), serversRouter);
 
