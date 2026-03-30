@@ -1,7 +1,7 @@
 import { FormEvent, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
-import { registerAccount } from "../lib/api";
-import { getApiConnectionErrorMessage } from "../lib/httpErrors";
+import { register as registerRequest } from "../api/auth";
+import { isValidEmailFormat } from "../lib/email";
 import { useAuthStore } from "../store/authStore";
 
 export function RegisterPage() {
@@ -13,7 +13,7 @@ export function RegisterPage() {
   const [username, setUsername] = useState("");
   const [characterColor, setCharacterColor] = useState("#3498db");
   const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   if (token) {
     return <Navigate to="/" replace />;
@@ -22,19 +22,26 @@ export function RegisterPage() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    setSubmitting(true);
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!isValidEmailFormat(trimmedEmail)) {
+      setError(
+        "Enter a valid email with a domain and TLD (e.g. name@gmail.com).",
+      );
+      return;
+    }
+    setLoading(true);
     try {
-      const { token: jwt, user } = await registerAccount({
-        email: email.trim(),
+      const { token: nextToken, user } = await registerRequest({
+        email: trimmedEmail,
         password,
         username: username.trim(),
         characterColor,
       });
-      login(jwt, { id: user.id, username: user.username });
+      login(nextToken, user);
     } catch (err) {
-      setError(getApiConnectionErrorMessage(err));
+      setError(err instanceof Error ? err.message : "Registration failed");
     } finally {
-      setSubmitting(false);
+      setLoading(false);
     }
   }
 
@@ -43,12 +50,12 @@ export function RegisterPage() {
       <div>
         <h1 className="text-2xl font-semibold text-white">Create account</h1>
         <p className="mt-2 text-sm text-slate-400">
-          3–20 character username (letters, numbers, underscores). Password 8–30 characters.
+          Email, password, and a unique username (3–20 letters, numbers, underscores).
         </p>
       </div>
-      <form onSubmit={(e) => void handleSubmit(e)} className="flex flex-col gap-4">
+      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         {error ? (
-          <p className="rounded-md border border-red-800/80 bg-red-950/40 px-3 py-2 text-sm text-red-200">
+          <p className="rounded-md border border-red-900/60 bg-red-950/40 px-3 py-2 text-sm text-red-200">
             {error}
           </p>
         ) : null}
@@ -60,28 +67,9 @@ export function RegisterPage() {
             id="reg-email"
             type="email"
             autoComplete="email"
+            required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            required
-            className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 placeholder:text-slate-500 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-          />
-        </div>
-        <div>
-          <label htmlFor="reg-username" className="mb-1 block text-sm text-slate-300">
-            Username
-          </label>
-          <input
-            id="reg-username"
-            type="text"
-            autoComplete="username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            required
-            minLength={3}
-            maxLength={20}
-            pattern="[a-zA-Z0-9_]{3,20}"
-            title="3 to 20 characters: letters, numbers, underscores"
-            placeholder="player_one"
             className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 placeholder:text-slate-500 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
           />
         </div>
@@ -93,20 +81,38 @@ export function RegisterPage() {
             id="reg-password"
             type="password"
             autoComplete="new-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
             required
             minLength={8}
             maxLength={30}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 placeholder:text-slate-500 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+          />
+          <p className="mt-1 text-xs text-slate-500">8–30 characters.</p>
+        </div>
+        <div>
+          <label htmlFor="reg-username" className="mb-1 block text-sm text-slate-300">
+            Username
+          </label>
+          <input
+            id="reg-username"
+            type="text"
+            autoComplete="username"
+            required
+            pattern="[a-zA-Z0-9_]{3,20}"
+            title="3–20 characters: letters, numbers, underscores"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="player_name"
             className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 placeholder:text-slate-500 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
           />
         </div>
         <div>
-          <label htmlFor="reg-character-color" className="mb-1 block text-sm text-slate-300">
+          <label htmlFor="reg-color" className="mb-1 block text-sm text-slate-300">
             Character color
           </label>
           <input
-            id="reg-character-color"
+            id="reg-color"
             type="color"
             value={characterColor}
             onChange={(e) => setCharacterColor(e.target.value)}
@@ -115,10 +121,10 @@ export function RegisterPage() {
         </div>
         <button
           type="submit"
-          disabled={submitting}
-          className="rounded-md bg-sky-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={loading}
+          className="rounded-md bg-sky-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-60"
         >
-          {submitting ? "Creating…" : "Create account"}
+          {loading ? "Creating account…" : "Create account"}
         </button>
       </form>
       <p className="text-center text-sm text-slate-500">

@@ -1,4 +1,5 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { AuthBootstrap } from "./components/AuthBootstrap";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { MainLayout } from "./layouts/MainLayout";
 import { GamePage } from "./pages/GamePage";
@@ -9,19 +10,19 @@ import { RegisterPage } from "./pages/RegisterPage";
 export default function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
-        <Route element={<ProtectedRoute />}>
-          <Route path="/" element={<MainLayout />}>
-            <Route index element={<LobbyPage />} />
-            <Route path="game" element={<GamePage />} />
+      <AuthBootstrap>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route element={<ProtectedRoute />}>
+            <Route path="/" element={<MainLayout />}>
+              <Route index element={<LobbyPage />} />
+              <Route path="game" element={<GamePage />} />
+            </Route>
           </Route>
-        </Route>
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </AuthBootstrap>
     </BrowserRouter>
   );
 }
-
-// gusito login
