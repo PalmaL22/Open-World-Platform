@@ -1,4 +1,3 @@
-// Check if the environment variables are set before the app starts
 export function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} must be set`);

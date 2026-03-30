@@ -5,14 +5,30 @@ import rateLimit from "express-rate-limit";
 import { Server } from "socket.io";
 import { authRouter } from "./routes/auth.js";
 import { serversRouter } from "./routes/servers.js";
-import { registerSocketHandlers } from "./socket/socketHandler.js";
+import { registerSocketAuth, registerSocketHandlers } from "./socket/socketHandler.js";
 import { CLIENT_ORIGIN, PORT } from "./types/env.js";
 
-const app = express();
-const corsOrigin = CLIENT_ORIGIN;
+const isProd = process.env.NODE_ENV === "production";
 
-app.use(cors({ origin: corsOrigin }));
+function browserOrigins(): string[] {
+  if (isProd) return [CLIENT_ORIGIN];
+  return [...new Set([CLIENT_ORIGIN, "http://localhost:5173", "http://127.0.0.1:5173"])];
+}
+
+const allowedOrigins = browserOrigins();
+
+const app = express();
+
+app.use(cors({ origin: allowedOrigins }));
 app.use(express.json());
+
+app.get("/", (_, res) =>
+  res.json({
+    ok: true,
+    service: "openworld-api",
+    hint: "This port is the API + Socket.IO only. Run the client (npm run dev in client/) and open the URL Vite prints, e.g. http://localhost:5173",
+  }),
+);
 
 app.get("/api/health", (_, res) => res.json({ ok: true }));
 
@@ -23,11 +39,12 @@ app.use("/api/servers", createServersRateLimiter(), serversRouter);
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: corsOrigin,
+    origin: allowedOrigins,
     methods: ["GET", "POST"],
   },
 });
 
+registerSocketAuth(io);
 registerSocketHandlers(io);
 
 httpServer.listen(PORT, () => {

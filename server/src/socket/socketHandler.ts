@@ -1,32 +1,143 @@
+import jwt from "jsonwebtoken";
 import type { Server } from "socket.io";
+import { prisma } from "../lib/prisma.js";
+import { JWT_SECRET } from "../types/env.js";
+
+const DEFAULT_CHARACTER_COLOR = "#3498db";
+
+export function registerSocketAuth(io: Server) {
+  io.use((socket, next) => {
+    const raw = socket.handshake.auth;
+    const token =
+      typeof raw === "object" && raw !== null && "token" in raw && typeof (raw as { token: unknown }).token === "string"
+        ? (raw as { token: string }).token
+        : null;
+
+    if (!token) {
+      next(new Error("Missing auth token"));
+      return;
+    }
+
+    try {
+      const payload = jwt.verify(token, JWT_SECRET) as { userId: string };
+      socket.data.userId = payload.userId;
+      next();
+    } catch {
+      next(new Error("Invalid auth token"));
+    }
+  });
+}
 
 export function registerSocketHandlers(io: Server) {
-  io.on("connection", (socket) => { console.log("Socket connected/created:", socket.id);
+  io.on("connection", (socket) => {
+    const userId = socket.data.userId as string | undefined;
+    if (!userId) {
+      socket.disconnect(true);
+      return;
+    }
 
-    socket.on("join-server", (payload: { serverId: string }) => {
+    console.log("Socket connected:", socket.id, "user", userId);
+
+    socket.on("join-server", async (payload: { serverId: string }) => {
       const serverId = payload?.serverId;
 
-      if (!serverId){
+      if (!serverId) {
         console.warn("Server ID is required");
+        socket.emit("join-error", { message: "Server ID is required" });
         return;
       }
 
-      const room = roomForServer(serverId);
-      // Debug Console log 
-      console.log("Socket joining room:", room);
+      try {
+        const user = await prisma.user.findUnique({
+          where: { id: userId },
+          include: { character: true },
+        });
 
-      void socket.join(room);
-      socket.to(room).emit("player-joined", { socketId: socket.id });
+        if (!user) {
+          socket.emit("join-error", { message: "User not found" });
+          return;
+        }
+
+        const characterColor = user.character?.color ?? DEFAULT_CHARACTER_COLOR;
+        socket.data.characterColor = characterColor;
+
+        if (user.currentServerId === serverId) {
+          const room = roomForServer(serverId);
+          await socket.join(room);
+          const server = await prisma.server.findUnique({ where: { id: serverId } });
+          socket.emit("joined-server", {
+            serverId,
+            name: server?.name ?? "",
+            username: user.username,
+            characterColor,
+          });
+          socket.to(room).emit("player-joined", { socketId: socket.id, color: characterColor });
+          return;
+        }
+
+        const server = await prisma.server.findUnique({
+          where: { id: serverId },
+        });
+
+        if (!server) {
+          socket.emit("join-error", { message: "Server not found" });
+          return;
+        }
+
+        const count = await prisma.user.count({
+          where: { currentServerId: serverId },
+        });
+
+        if (count >= server.maxCapacity) {
+          socket.emit("join-error", { message: "Server is full" });
+          return;
+        }
+
+        const oldId = user.currentServerId;
+        if (oldId && oldId !== serverId) {
+          await socket.leave(roomForServer(oldId));
+        }
+
+        await prisma.user.update({
+          where: { id: userId },
+          data: { currentServerId: serverId },
+        });
+
+        const room = roomForServer(serverId);
+        await socket.join(room);
+
+        socket.emit("joined-server", {
+          serverId,
+          name: server.name,
+          username: user.username,
+          characterColor,
+        });
+
+        socket.to(room).emit("player-joined", { socketId: socket.id, color: characterColor });
+        console.log(`User ${userId} joined server room ${room}`);
+      } catch (e) {
+        console.error(e);
+        socket.emit("join-error", { message: "Could not join server" });
+      }
     });
 
-    socket.on("leave-server", (payload: { serverId: string }) => {
+    socket.on("leave-server", async (payload: { serverId: string }) => {
       const serverId = payload?.serverId;
       if (!serverId) {
         console.warn("Server ID is required");
         return;
       }
-      
-      void socket.leave(roomForServer(serverId));
+
+      await socket.leave(roomForServer(serverId));
+
+      try {
+        await prisma.user.updateMany({
+          where: { id: userId, currentServerId: serverId },
+          data: { currentServerId: null },
+        });
+      } catch (e) {
+        console.error(e);
+      }
     });
 
     socket.on("player-move", (payload: { serverId: string; x: number; y: number }) => {
@@ -35,20 +146,31 @@ export function registerSocketHandlers(io: Server) {
       if (!serverId) {
         console.warn("Server ID is required");
         return;
-      } else if (payload.x == null || payload.y == null) { // null because !payload.x would trigger for 0 x or y values
+      } else if (payload.x == null || payload.y == null) {
         console.warn("X and Y are required", payload.x, payload.y, "for server", serverId);
         return;
       }
 
+      const color = socket.data.characterColor ?? DEFAULT_CHARACTER_COLOR;
       socket.to(roomForServer(serverId)).emit("player-moved", {
         socketId: socket.id,
         x: payload.x,
         y: payload.y,
+        color,
       });
     });
 
-    socket.on("disconnect", () => {
+    socket.on("disconnect", async () => {
       console.log("Socket disconnected:", socket.id);
+
+      try {
+        await prisma.user.updateMany({
+          where: { id: userId },
+          data: { currentServerId: null },
+        });
+      } catch (e) {
+        console.error(e);
+      }
     });
   });
 }
