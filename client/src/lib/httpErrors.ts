@@ -1,7 +1,6 @@
 import { isAxiosError } from "axios";
 import { getApiOrigin } from "./apiOrigin";
 
-/** User-facing message when the request never reached the API or the response was not JSON. */
 export function getApiConnectionErrorMessage(err: unknown): string {
   const api = getApiOrigin() || "API (set VITE_API_URL for production)";
   if (isAxiosError(err)) {

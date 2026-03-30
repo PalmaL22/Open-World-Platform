@@ -24,6 +24,15 @@ function fillForSocketId(socketId: string): number {
   return (0x5a5a5a + (Math.abs(h) % 0xa0a0a0)) & 0xffffff;
 }
 
+/** HTML `#rrggbb` → Phaser fill color integer */
+function hexStringToPhaserColor(hex: string): number {
+  const s = hex.trim();
+  if (/^#[0-9a-fA-F]{6}$/u.test(s)) {
+    return Number.parseInt(s.slice(1), 16);
+  }
+  return 0x3498db;
+}
+
 type Wasd = {
   W: Phaser.Input.Keyboard.Key;
   S: Phaser.Input.Keyboard.Key;
@@ -40,20 +49,25 @@ export class MainScene extends Phaser.Scene {
   private localBody!: Phaser.Physics.Arcade.Body;
   private remote = new Map<string, Phaser.GameObjects.Rectangle>();
   private lastEmit = 0;
+  private localColorHex = "#3498db";
 
-  private onPlayerJoined = (payload: { socketId: string }) => {
+  private remoteFill(payload: { socketId: string; color?: string }): number {
+    return payload.color ? hexStringToPhaserColor(payload.color) : fillForSocketId(payload.socketId);
+  }
+
+  private onPlayerJoined = (payload: { socketId: string; color?: string }) => {
     if (payload.socketId === this.socket.id) return;
     if (this.remote.has(payload.socketId)) return;
     const { x, y } = spawnFromSocketId(payload.socketId);
-    const rect = this.add.rectangle(x, y, 26, 26, fillForSocketId(payload.socketId));
+    const rect = this.add.rectangle(x, y, 26, 26, this.remoteFill(payload));
     this.remote.set(payload.socketId, rect);
   };
 
-  private onPlayerMoved = (payload: { socketId: string; x: number; y: number }) => {
+  private onPlayerMoved = (payload: { socketId: string; x: number; y: number; color?: string }) => {
     if (payload.socketId === this.socket.id) return;
     let rect = this.remote.get(payload.socketId);
     if (!rect) {
-      rect = this.add.rectangle(payload.x, payload.y, 26, 26, fillForSocketId(payload.socketId));
+      rect = this.add.rectangle(payload.x, payload.y, 26, 26, this.remoteFill(payload));
       this.remote.set(payload.socketId, rect);
     }
     rect.setPosition(payload.x, payload.y);
@@ -63,15 +77,19 @@ export class MainScene extends Phaser.Scene {
     super("MainScene");
   }
 
-  init(data: { socket: Socket; serverId: string }) {
+  init(data: { socket: Socket; serverId: string; localColorHex?: string }) {
     this.socket = data.socket;
     this.serverId = data.serverId;
+    if (data.localColorHex) {
+      this.localColorHex = data.localColorHex;
+    }
   }
 
   create() {
     this.physics.world.setBounds(0, 0, WORLD_W, WORLD_H);
 
-    const localRect = this.add.rectangle(WORLD_W / 2, WORLD_H / 2, 28, 28, 0x38bdf8);
+    const localFill = hexStringToPhaserColor(this.localColorHex);
+    const localRect = this.add.rectangle(WORLD_W / 2, WORLD_H / 2, 28, 28, localFill);
     this.physics.add.existing(localRect);
     const body = localRect.body as Phaser.Physics.Arcade.Body;
     body.setCollideWorldBounds(true);

@@ -10,7 +10,6 @@ function socketBaseUrl(): string {
   return b;
 }
 
-/** Socket.IO client authenticated with the stored JWT (same host as HTTP API). */
 export function createAuthenticatedGameSocket(): Socket {
   const token = useAuthStore.getState().token;
   if (!token) {

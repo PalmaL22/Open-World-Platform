@@ -3,6 +3,8 @@ import type { Server } from "socket.io";
 import { prisma } from "../lib/prisma.js";
 import { JWT_SECRET } from "../types/env.js";
 
+const DEFAULT_CHARACTER_COLOR = "#3498db";
+
 export function registerSocketAuth(io: Server) {
   io.use((socket, next) => {
     const raw = socket.handshake.auth;
@@ -48,12 +50,16 @@ export function registerSocketHandlers(io: Server) {
       try {
         const user = await prisma.user.findUnique({
           where: { id: userId },
+          include: { character: true },
         });
 
         if (!user) {
           socket.emit("join-error", { message: "User not found" });
           return;
         }
+
+        const characterColor = user.character?.color ?? DEFAULT_CHARACTER_COLOR;
+        socket.data.characterColor = characterColor;
 
         if (user.currentServerId === serverId) {
           const room = roomForServer(serverId);
@@ -63,8 +69,9 @@ export function registerSocketHandlers(io: Server) {
             serverId,
             name: server?.name ?? "",
             username: user.username,
+            characterColor,
           });
-          socket.to(room).emit("player-joined", { socketId: socket.id });
+          socket.to(room).emit("player-joined", { socketId: socket.id, color: characterColor });
           return;
         }
 
@@ -103,9 +110,10 @@ export function registerSocketHandlers(io: Server) {
           serverId,
           name: server.name,
           username: user.username,
+          characterColor,
         });
 
-        socket.to(room).emit("player-joined", { socketId: socket.id });
+        socket.to(room).emit("player-joined", { socketId: socket.id, color: characterColor });
         console.log(`User ${userId} joined server room ${room}`);
       } catch (e) {
         console.error(e);
@@ -143,10 +151,12 @@ export function registerSocketHandlers(io: Server) {
         return;
       }
 
+      const color = socket.data.characterColor ?? DEFAULT_CHARACTER_COLOR;
       socket.to(roomForServer(serverId)).emit("player-moved", {
         socketId: socket.id,
         x: payload.x,
         y: payload.y,
+        color,
       });
     });
 

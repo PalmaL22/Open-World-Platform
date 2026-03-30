@@ -17,7 +17,6 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-/** Same fields as `req.body` in `authRouter.post("/register")` — server/src/routes/auth.ts */
 export type RegisterPayload = {
   email: string;
   password: string;
@@ -30,19 +29,16 @@ export type AuthResult = {
   user: { id: string; username: string };
 };
 
-/** Calls `POST /api/auth/register` → `authRouter.post("/register", ...)` */
 export async function registerAccount(payload: RegisterPayload): Promise<AuthResult> {
   const { data } = await api.post<AuthResult>("/api/auth/register", payload);
   return data;
 }
 
-/** Same fields as `req.body` in `authRouter.post("/login")` — server/src/routes/auth.ts */
 export type LoginPayload = {
   email: string;
   password: string;
 };
 
-/** Calls `POST /api/auth/login` → `authRouter.post("/login", ...)` */
 export async function loginAccount(payload: LoginPayload): Promise<AuthResult> {
   const { data } = await api.post<AuthResult>("/api/auth/login", payload);
   return data;

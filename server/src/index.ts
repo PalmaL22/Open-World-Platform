@@ -10,7 +10,6 @@ import { CLIENT_ORIGIN, PORT } from "./types/env.js";
 
 const isProd = process.env.NODE_ENV === "production";
 
-/** In dev, allow both localhost and 127.0.0.1 for Vite (they are different CORS origins). */
 function browserOrigins(): string[] {
   if (isProd) return [CLIENT_ORIGIN];
   return [...new Set([CLIENT_ORIGIN, "http://localhost:5173", "http://127.0.0.1:5173"])];

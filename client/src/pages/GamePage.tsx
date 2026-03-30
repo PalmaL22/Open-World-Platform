@@ -9,6 +9,7 @@ type JoinedPayload = {
   serverId: string;
   name: string;
   username: string;
+  characterColor: string;
 };
 
 export function GamePage() {
@@ -117,7 +118,11 @@ export function GamePage() {
             <span className="font-medium text-slate-200">{joined.name}</span>
             <span className="text-slate-500"> — arrow keys or WASD to move</span>
           </p>
-          <GameCanvas socket={gameSocket} serverId={joined.serverId} />
+          <GameCanvas
+            socket={gameSocket}
+            serverId={joined.serverId}
+            characterColor={joined.characterColor}
+          />
         </div>
       )}
     </div>
