@@ -116,7 +116,10 @@ export function GamePage() {
           <p className="text-slate-400">
             <span className="font-medium text-slate-200">{joined.username}</span> on{" "}
             <span className="font-medium text-slate-200">{joined.name}</span>
-            <span className="text-slate-500"> — arrow keys or WASD to move</span>
+            <span className="text-slate-500">
+              {" "}
+              — WASD / arrows to move; conference hall demo
+            </span>
           </p>
           <GameCanvas
             socket={gameSocket}

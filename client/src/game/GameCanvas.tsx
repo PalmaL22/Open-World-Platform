@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { useEffect, useRef } from "react";
 import type { Socket } from "socket.io-client";
+import { VIEW_H, VIEW_W } from "./gameWorld";
 import { MainScene } from "./mainScene";
 
 type GameCanvasProps = {
@@ -19,8 +20,8 @@ export function GameCanvas({ socket, serverId, characterColor }: GameCanvasProps
     const game = new Phaser.Game({
       type: Phaser.AUTO,
       parent,
-      width: 800,
-      height: 600,
+      width: VIEW_W,
+      height: VIEW_H,
       backgroundColor: "#0f172a",
       physics: {
         default: "arcade",
@@ -53,7 +54,7 @@ export function GameCanvas({ socket, serverId, characterColor }: GameCanvasProps
   return (
     <div
       ref={parentRef}
-      className="mx-auto aspect-[4/3] w-full max-w-[800px] overflow-hidden rounded-lg border border-slate-700 bg-slate-950 shadow-lg"
+      className="mx-auto aspect-[4/3] w-full max-w-[840px] overflow-hidden rounded-lg border border-slate-700 bg-slate-950 shadow-lg"
     />
   );
 }
