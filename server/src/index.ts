@@ -12,7 +12,15 @@ const isProd = process.env.NODE_ENV === "production";
 
 function browserOrigins(): string[] {
   if (isProd) return [CLIENT_ORIGIN];
-  return [...new Set([CLIENT_ORIGIN, "http://localhost:5173", "http://127.0.0.1:5173"])];
+  return [
+    ...new Set([
+      CLIENT_ORIGIN,
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
+      "http://localhost:5174",
+      "http://127.0.0.1:5174",
+    ]),
+  ];
 }
 
 const allowedOrigins = browserOrigins();

@@ -11,6 +11,7 @@ model Server {
   name        String @unique
   maxCapacity Int    @default(10)
   users       User[]
+  chatMessages ChatMessage[]
 }
 
 model User {
@@ -21,6 +22,7 @@ model User {
   currentServerId String?
   character       Character?
   currentServer   Server?    @relation(fields: [currentServerId], references: [id])
+  chatMessages    ChatMessage[]
 }
 
 model Character {
@@ -30,4 +32,16 @@ model Character {
   hat      String?
   facewear String?
   user     User    @relation(fields: [userId], references: [id])
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  serverId  String
+  userId    String
+  content   String
+  createdAt DateTime @default(now())
+  server    Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([serverId, createdAt])
 }

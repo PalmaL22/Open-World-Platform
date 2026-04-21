@@ -4,6 +4,9 @@ import { prisma } from "../lib/prisma.js";
 import { JWT_SECRET } from "../types/env.js";
 
 const DEFAULT_CHARACTER_COLOR = "#3498db";
+const CHAT_HISTORY_LIMIT = 50;
+const CHAT_MAX_LENGTH = 300;
+const CHAT_MIN_INTERVAL_MS = 300;
 
 export function registerSocketAuth(io: Server) {
   io.use((socket, next) => {
@@ -38,6 +41,104 @@ export function registerSocketHandlers(io: Server) {
 
     console.log("Socket connected:", socket.id, "user", userId);
 
+    const emitSystemMessage = (serverId: string, content: string) => {
+      io.to(roomForServer(serverId)).emit("chat:system", {
+        content,
+        createdAt: new Date().toISOString(),
+      });
+    };
+
+    const emitChatHistory = async (serverId: string) => {
+      const history = await prisma.chatMessage.findMany({
+        where: { serverId },
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        take: CHAT_HISTORY_LIMIT,
+      });
+
+      socket.emit(
+        "chat:history",
+        history.reverse().map((message) => ({
+          id: message.id,
+          content: message.content,
+          createdAt: message.createdAt.toISOString(),
+          user: {
+            id: message.user.id,
+            username: message.user.username,
+          },
+        })),
+      );
+    };
+
+    const roomMembers = (serverId: string) => {
+      const room = roomForServer(serverId);
+      const memberIds = io.sockets.adapter.rooms.get(room);
+      if (!memberIds) return [];
+      return [...memberIds]
+        .map((id) => io.sockets.sockets.get(id))
+        .filter((member): member is NonNullable<typeof member> => Boolean(member));
+    };
+
+    const mapPlayer = (member: ReturnType<typeof roomMembers>[number]) => ({
+      socketId: member.id,
+      color: (member.data.characterColor as string | undefined) ?? DEFAULT_CHARACTER_COLOR,
+      x: typeof member.data.x === "number" ? member.data.x : undefined,
+      y: typeof member.data.y === "number" ? member.data.y : undefined,
+    });
+
+    const emitPlayersSnapshot = async (serverId: string) => {
+      const players = roomMembers(serverId).filter((member) => member.id !== socket.id).map(mapPlayer);
+      socket.emit("players:snapshot", players);
+    };
+
+    const emitPlayersSnapshotToRoom = async (serverId: string) => {
+      const members = roomMembers(serverId);
+      for (const member of members) {
+        member.emit(
+          "players:snapshot",
+          members
+            .filter((other) => other.id !== member.id)
+            .map(mapPlayer),
+        );
+      }
+    };
+
+    const leaveActiveServer = async (reason: "leave" | "disconnect") => {
+      const activeServerId = socket.data.serverId as string | undefined;
+      const username = socket.data.username as string | undefined;
+      if (!activeServerId) return;
+
+      await socket.leave(roomForServer(activeServerId));
+
+      try {
+        await prisma.user.updateMany({
+          where: { id: userId, currentServerId: activeServerId },
+          data: { currentServerId: null },
+        });
+      } catch (e) {
+        console.error(e);
+      }
+
+      socket.to(roomForServer(activeServerId)).emit("player-left", {
+        socketId: socket.id,
+      });
+      if (username) {
+        emitSystemMessage(activeServerId, `${username} left the room`);
+      }
+      await emitPlayersSnapshotToRoom(activeServerId);
+      socket.data.serverId = undefined;
+      if (reason === "disconnect") {
+        socket.data.username = undefined;
+      }
+    };
+
     socket.on("join-server", async (payload: { serverId: string }) => {
       const serverId = payload?.serverId;
 
@@ -60,10 +161,12 @@ export function registerSocketHandlers(io: Server) {
 
         const characterColor = user.character?.color ?? DEFAULT_CHARACTER_COLOR;
         socket.data.characterColor = characterColor;
+        socket.data.username = user.username;
 
         if (user.currentServerId === serverId) {
           const room = roomForServer(serverId);
           await socket.join(room);
+          socket.data.serverId = serverId;
           const server = await prisma.server.findUnique({ where: { id: serverId } });
           socket.emit("joined-server", {
             serverId,
@@ -71,7 +174,16 @@ export function registerSocketHandlers(io: Server) {
             username: user.username,
             characterColor,
           });
-          socket.to(room).emit("player-joined", { socketId: socket.id, color: characterColor });
+          await emitChatHistory(serverId);
+          await emitPlayersSnapshot(serverId);
+          emitSystemMessage(serverId, `${user.username} joined the room`);
+          socket.to(room).emit("player-joined", {
+            socketId: socket.id,
+            color: characterColor,
+            x: socket.data.x,
+            y: socket.data.y,
+          });
+          await emitPlayersSnapshotToRoom(serverId);
           return;
         }
 
@@ -95,7 +207,7 @@ export function registerSocketHandlers(io: Server) {
 
         const oldId = user.currentServerId;
         if (oldId && oldId !== serverId) {
-          await socket.leave(roomForServer(oldId));
+          await leaveActiveServer("leave");
         }
 
         await prisma.user.update({
@@ -105,6 +217,7 @@ export function registerSocketHandlers(io: Server) {
 
         const room = roomForServer(serverId);
         await socket.join(room);
+        socket.data.serverId = serverId;
 
         socket.emit("joined-server", {
           serverId,
@@ -112,8 +225,17 @@ export function registerSocketHandlers(io: Server) {
           username: user.username,
           characterColor,
         });
+        await emitChatHistory(serverId);
+        await emitPlayersSnapshot(serverId);
+        emitSystemMessage(serverId, `${user.username} joined the room`);
 
-        socket.to(room).emit("player-joined", { socketId: socket.id, color: characterColor });
+        socket.to(room).emit("player-joined", {
+          socketId: socket.id,
+          color: characterColor,
+          x: socket.data.x,
+          y: socket.data.y,
+        });
+        await emitPlayersSnapshotToRoom(serverId);
         console.log(`User ${userId} joined server room ${room}`);
       } catch (e) {
         console.error(e);
@@ -127,24 +249,14 @@ export function registerSocketHandlers(io: Server) {
         console.warn("Server ID is required");
         return;
       }
-
-      await socket.leave(roomForServer(serverId));
-
-      try {
-        await prisma.user.updateMany({
-          where: { id: userId, currentServerId: serverId },
-          data: { currentServerId: null },
-        });
-      } catch (e) {
-        console.error(e);
-      }
+      await leaveActiveServer("leave");
     });
 
     socket.on("player-move", (payload: { serverId: string; x: number; y: number }) => {
-      const serverId = payload?.serverId;
+      const serverId = socket.data.serverId as string | undefined;
 
       if (!serverId) {
-        console.warn("Server ID is required");
+        console.warn("Active server ID is required");
         return;
       } else if (payload.x == null || payload.y == null) {
         console.warn("X and Y are required", payload.x, payload.y, "for server", serverId);
@@ -152,6 +264,8 @@ export function registerSocketHandlers(io: Server) {
       }
 
       const color = socket.data.characterColor ?? DEFAULT_CHARACTER_COLOR;
+      socket.data.x = payload.x;
+      socket.data.y = payload.y;
       socket.to(roomForServer(serverId)).emit("player-moved", {
         socketId: socket.id,
         x: payload.x,
@@ -160,17 +274,70 @@ export function registerSocketHandlers(io: Server) {
       });
     });
 
-    socket.on("disconnect", async () => {
-      console.log("Socket disconnected:", socket.id);
+    socket.on("chat:send", async (payload: { content?: string }) => {
+      const serverId = socket.data.serverId as string | undefined;
+      const username = socket.data.username as string | undefined;
+      const rawContent = payload?.content ?? "";
+      const content = rawContent.trim();
+      const now = Date.now();
+      const lastChatAt = (socket.data.lastChatAt as number | undefined) ?? 0;
+
+      if (!serverId) {
+        socket.emit("chat:error", { message: "Join a server before chatting." });
+        return;
+      }
+
+      if (!content) {
+        socket.emit("chat:error", { message: "Message cannot be empty." });
+        return;
+      }
+
+      if (content.length > CHAT_MAX_LENGTH) {
+        socket.emit("chat:error", { message: `Message too long (max ${CHAT_MAX_LENGTH} chars).` });
+        return;
+      }
+
+      if (now - lastChatAt < CHAT_MIN_INTERVAL_MS) {
+        socket.emit("chat:error", { message: "You're sending messages too fast." });
+        return;
+      }
+
+      socket.data.lastChatAt = now;
 
       try {
-        await prisma.user.updateMany({
-          where: { id: userId },
-          data: { currentServerId: null },
+        const message = await prisma.chatMessage.create({
+          data: {
+            serverId,
+            userId,
+            content,
+          },
+        });
+
+        io.to(roomForServer(serverId)).emit("chat:message", {
+          id: message.id,
+          socketId: socket.id,
+          content: message.content,
+          createdAt: message.createdAt.toISOString(),
+          user: {
+            id: userId,
+            username: username ?? "Unknown",
+          },
         });
       } catch (e) {
         console.error(e);
+        socket.emit("chat:error", { message: "Could not send message." });
       }
+    });
+
+    socket.on("players:sync", async () => {
+      const serverId = socket.data.serverId as string | undefined;
+      if (!serverId) return;
+      await emitPlayersSnapshot(serverId);
+    });
+
+    socket.on("disconnect", async () => {
+      console.log("Socket disconnected:", socket.id);
+      await leaveActiveServer("disconnect");
     });
   });
 }

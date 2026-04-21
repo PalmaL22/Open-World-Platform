@@ -8,10 +8,13 @@ type GameCanvasProps = {
   socket: Socket;
   serverId: string;
   characterColor: string;
+  remotePlayers: Array<{ socketId: string; color?: string; x?: number; y?: number }>;
+  chatBubble?: { id: string; socketId: string; content: string } | null;
 };
 
-export function GameCanvas({ socket, serverId, characterColor }: GameCanvasProps) {
+export function GameCanvas({ socket, serverId, characterColor, remotePlayers, chatBubble }: GameCanvasProps) {
   const parentRef = useRef<HTMLDivElement>(null);
+  const gameRef = useRef<Phaser.Game | null>(null);
 
   useEffect(() => {
     const parent = parentRef.current;
@@ -45,15 +48,40 @@ export function GameCanvas({ socket, serverId, characterColor }: GameCanvasProps
       serverId,
       localColorHex: characterColor,
     });
+    gameRef.current = game;
 
     return () => {
+      gameRef.current = null;
       game.destroy(true);
     };
   }, [socket, serverId, characterColor]);
 
+  useEffect(() => {
+    const game = gameRef.current;
+    if (!game) return;
+    const scene = game.scene.getScene("MainScene") as MainScene;
+    if (!scene) return;
+    scene.applyRemoteSnapshot(remotePlayers);
+  }, [remotePlayers]);
+
+  useEffect(() => {
+    if (!chatBubble) return;
+    const game = gameRef.current;
+    if (!game) return;
+    const scene = game.scene.getScene("MainScene") as MainScene;
+    if (!scene) return;
+    scene.showChatBubble({ socketId: chatBubble.socketId, content: chatBubble.content });
+  }, [chatBubble]);
+
   return (
     <div
       ref={parentRef}
+      onPointerDown={() => {
+        const active = document.activeElement;
+        if (active instanceof HTMLElement) {
+          active.blur();
+        }
+      }}
       className="mx-auto aspect-[4/3] w-full max-w-[840px] overflow-hidden rounded-lg border border-slate-700 bg-slate-950 shadow-lg"
     />
   );
