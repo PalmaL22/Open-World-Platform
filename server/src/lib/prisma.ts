@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 import { PrismaClient } from "@prisma/client";
+import { isProdRuntime } from "../types/runtime.js";
 
 dotenv.config({
   path: path.join(path.dirname(fileURLToPath(import.meta.url)), "../../.env"),
@@ -22,4 +23,4 @@ export const prisma =
     log: process.env.NODE_ENV === "development" ? ["query", "error", "warn"] : ["error"],
   });
 
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+if (!isProdRuntime) globalForPrisma.prisma = prisma;
