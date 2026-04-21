@@ -10,7 +10,7 @@ import { CLIENT_ORIGIN, PORT } from "./types/env.js";
 import { isProdRuntime } from "./types/runtime.js";
 
 function browserOrigins(): string[] {
-  if (isProd) return [CLIENT_ORIGIN];
+  if (isProdRuntime) return [CLIENT_ORIGIN];
   return [
     ...new Set([
       CLIENT_ORIGIN,
