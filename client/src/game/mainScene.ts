@@ -27,23 +27,25 @@ function mulberry32(seed: number) {
   };
 }
 
-function spawnFromSocketId(socketId: string): { x: number; y: number } {
-  let h = 0;
-  for (let i = 0; i < socketId.length; i++) {
-    h = (Math.imul(31, h) + socketId.charCodeAt(i)) | 0;
-  }
-  const pad = 120;
-  const x = pad + (Math.abs(h) % (WORLD_W - pad * 2));
-  const y = pad + (Math.abs(h >> 16) % (WORLD_H - pad * 2));
-  return { x, y };
-}
-
 function fillForSocketId(socketId: string): number {
   let h = 0;
   for (let i = 0; i < socketId.length; i++) {
     h = (Math.imul(31, h) + socketId.charCodeAt(i)) | 0;
   }
   return (0x5a5a5a + (Math.abs(h) % 0xa0a0a0)) & 0xffffff;
+}
+
+function offsetFromSocketId(socketId: string): { dx: number; dy: number } {
+  let h = 0;
+  for (let i = 0; i < socketId.length; i++) {
+    h = (Math.imul(37, h) + socketId.charCodeAt(i)) | 0;
+  }
+  const angle = Math.abs(h % 360) * (Math.PI / 180);
+  const radius = 56 + (Math.abs(h >> 8) % 28);
+  return {
+    dx: Math.round(Math.cos(angle) * radius),
+    dy: Math.round(Math.sin(angle) * radius),
+  };
 }
 
 function hexStringToPhaserColor(hex: string): number {
@@ -72,6 +74,9 @@ export class MainScene extends Phaser.Scene {
   private localPlayer!: Phaser.Physics.Arcade.Sprite;
   private localBody!: Phaser.Physics.Arcade.Body;
   private remote = new Map<string, Phaser.GameObjects.Sprite>();
+  private remoteTargets = new Map<string, { x: number; y: number }>();
+  private remoteBubbles = new Map<string, { text: Phaser.GameObjects.Text; expiresAt: number }>();
+  private localBubble?: { text: Phaser.GameObjects.Text; expiresAt: number };
   private lastEmit = 0;
   private localColorHex = "#3498db";
 
@@ -100,31 +105,76 @@ export class MainScene extends Phaser.Scene {
   private makeRemoteSprite(x: number, y: number, tint: number): Phaser.GameObjects.Sprite {
     const s = this.add.sprite(x, y, PLAYER_TEX);
     s.setTint(tint);
+    s.setScale(1);
     s.setDepth(y);
     return s;
   }
 
-  private onPlayerJoined = (payload: { socketId: string; color?: string }) => {
+  private onPlayerJoined = (payload: { socketId: string; color?: string; x?: number; y?: number }) => {
     if (payload.socketId === this.socket.id) return;
     if (this.remote.has(payload.socketId)) return;
-    const { x, y } = spawnFromSocketId(payload.socketId);
+    const fallback = offsetFromSocketId(payload.socketId);
+    const x = typeof payload.x === "number" ? payload.x : this.localPlayer.x + fallback.dx;
+    const y = typeof payload.y === "number" ? payload.y : this.localPlayer.y + fallback.dy;
     const sprite = this.makeRemoteSprite(x, y, this.remoteTint(payload));
     this.remote.set(payload.socketId, sprite);
+    this.remoteTargets.set(payload.socketId, { x, y });
   };
 
-  private onPlayerMoved = (payload: { socketId: string; x: number; y: number; color?: string }) => {
-    if (payload.socketId === this.socket.id) return;
-    let sprite = this.remote.get(payload.socketId);
-    if (!sprite) {
-      sprite = this.makeRemoteSprite(payload.x, payload.y, this.remoteTint(payload));
-      this.remote.set(payload.socketId, sprite);
+  public showChatBubble(payload: { socketId: string; content: string }) {
+    const clipped = payload.content.length > 36 ? `${payload.content.slice(0, 36)}...` : payload.content;
+    const expiresAt = this.time.now + 2600;
+    const baseStyle: Phaser.Types.GameObjects.Text.TextStyle = {
+      fontFamily: "system-ui, Segoe UI, sans-serif",
+      fontSize: "12px",
+      color: "#e2e8f0",
+      backgroundColor: "#0f172acc",
+      padding: { x: 6, y: 3 },
+      align: "center",
+    };
+
+    if (payload.socketId === this.socket.id) {
+      this.localBubble?.text.destroy();
+      const text = this.add.text(this.localPlayer.x, this.localPlayer.y - 42, clipped, baseStyle).setOrigin(0.5, 1).setDepth(3000);
+      this.localBubble = { text, expiresAt };
+      return;
     }
-    sprite.setPosition(payload.x, payload.y);
-    sprite.setDepth(payload.y);
-    if (payload.color) {
-      sprite.setTint(this.remoteTint(payload));
+
+    const remote = this.remote.get(payload.socketId);
+    if (!remote) return;
+    const existing = this.remoteBubbles.get(payload.socketId);
+    existing?.text.destroy();
+    const text = this.add.text(remote.x, remote.y - 42, clipped, baseStyle).setOrigin(0.5, 1).setDepth(3000);
+    this.remoteBubbles.set(payload.socketId, { text, expiresAt });
+  }
+
+  public applyRemoteSnapshot(players: Array<{ socketId: string; color?: string; x?: number; y?: number }>) {
+    const liveIds = new Set(players.map((p) => p.socketId));
+    for (const [socketId, sprite] of this.remote.entries()) {
+      if (!liveIds.has(socketId)) {
+        sprite.destroy();
+        this.remote.delete(socketId);
+        this.remoteTargets.delete(socketId);
+        const bubble = this.remoteBubbles.get(socketId);
+        bubble?.text.destroy();
+        this.remoteBubbles.delete(socketId);
+      }
     }
-  };
+
+    for (const player of players) {
+      if (player.socketId === this.socket.id) continue;
+      const existing = this.remote.get(player.socketId);
+      if (!existing) {
+        this.onPlayerJoined(player);
+      } else if (player.color) {
+        existing.setTint(this.remoteTint(player));
+      }
+
+      if (typeof player.x === "number" && typeof player.y === "number") {
+        this.remoteTargets.set(player.socketId, { x: player.x, y: player.y });
+      }
+    }
+  }
 
 
   preload() {
@@ -742,9 +792,6 @@ export class MainScene extends Phaser.Scene {
     this.interactKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E);
     this.escKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
 
-    this.socket.on("player-joined", this.onPlayerJoined);
-    this.socket.on("player-moved", this.onPlayerMoved);
-
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.socket.off("player-joined", this.onPlayerJoined);
       this.socket.off("player-moved", this.onPlayerMoved);
@@ -754,6 +801,13 @@ export class MainScene extends Phaser.Scene {
       }
       this.remote.clear();
 
+      this.remoteTargets.clear();
+      for (const bubble of this.remoteBubbles.values()) {
+        bubble.text.destroy();
+      }
+      this.remoteBubbles.clear();
+      this.localBubble?.text.destroy();
+      this.localBubble = undefined;
       for (const npc of this.npcs) npc.destroy();
       this.npcs = [];
 
@@ -767,7 +821,11 @@ export class MainScene extends Phaser.Scene {
     });
   }
 
-  update(time: number, _delta: number) {
+  update(time: number, delta: number) {
+    const cam = this.cameras.main;
+    this.floorLayer.tilePositionX = cam.scrollX * 0.15;
+    this.floorLayer.tilePositionY = cam.scrollY * 0.12;
+
     let vx = 0;
     let vy = 0;
 
@@ -785,8 +843,33 @@ export class MainScene extends Phaser.Scene {
 
     this.localBody.setVelocity(vx, vy);
 
+    for (const [socketId, sprite] of this.remote.entries()) {
+      const target = this.remoteTargets.get(socketId);
+      if (!target) continue;
+      const lerp = 1 - Math.exp(-delta / 85);
+      const nx = Phaser.Math.Linear(sprite.x, target.x, lerp);
+      const ny = Phaser.Math.Linear(sprite.y, target.y, lerp);
+      sprite.setPosition(nx, ny);
+      sprite.setDepth(ny);
+      const bubble = this.remoteBubbles.get(socketId);
+      if (bubble) {
+        bubble.text.setPosition(nx, ny - 42);
+        if (this.time.now >= bubble.expiresAt) {
+          bubble.text.destroy();
+          this.remoteBubbles.delete(socketId);
+        }
+      }
+    }
+
     const py = this.localPlayer.y;
     this.localPlayer.setDepth(py);
+    if (this.localBubble) {
+      this.localBubble.text.setPosition(this.localPlayer.x, this.localPlayer.y - 42);
+      if (this.time.now >= this.localBubble.expiresAt) {
+        this.localBubble.text.destroy();
+        this.localBubble = undefined;
+      }
+    }
 
     const moving = vx !== 0 || vy !== 0;
     this.localPlayer.setFlipX(vx < 0);

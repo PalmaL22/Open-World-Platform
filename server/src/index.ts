@@ -7,27 +7,42 @@ import { authRouter } from "./routes/auth.js";
 import { serversRouter } from "./routes/servers.js";
 import { registerSocketAuth, registerSocketHandlers } from "./socket/socketHandler.js";
 import { CLIENT_ORIGIN, PORT } from "./types/env.js";
-
-const isProd = process.env.NODE_ENV === "production";
+import { isProdRuntime } from "./types/runtime.js";
 
 function browserOrigins(): string[] {
-  if (isProd) return [CLIENT_ORIGIN];
-  return [...new Set([CLIENT_ORIGIN, "http://localhost:5173", "http://127.0.0.1:5173"])];
+  if (isProdRuntime) return [CLIENT_ORIGIN];
+  return [
+    ...new Set([
+      CLIENT_ORIGIN,
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
+      "http://localhost:5174",
+      "http://127.0.0.1:5174",
+    ]),
+  ];
 }
 
 const allowedOrigins = browserOrigins();
 
 const app = express();
 
+if (isProdRuntime) {
+  app.set("trust proxy", 1);
+}
+
 app.use(cors({ origin: allowedOrigins }));
 app.use(express.json());
 
 app.get("/", (_, res) =>
-  res.json({
-    ok: true,
-    service: "openworld-api",
-    hint: "This port is the API + Socket.IO only. Run the client (npm run dev in client/) and open the URL Vite prints, e.g. http://localhost:5173",
-  }),
+  res.json(
+    isProdRuntime
+      ? { ok: true, service: "openworld-api" }
+      : {
+          ok: true,
+          service: "openworld-api",
+          hint: "This port is the API + Socket.IO only. Run the client (npm run dev in client/) and open the URL Vite prints, e.g. http://localhost:5173",
+        },
+  ),
 );
 
 app.get("/api/health", (_, res) => res.json({ ok: true }));
@@ -47,7 +62,11 @@ registerSocketAuth(io);
 registerSocketHandlers(io);
 
 httpServer.listen(PORT, () => {
-  console.log(`HTTP + Socket.io on http://localhost:${PORT}`);
+  if (isProdRuntime) {
+    console.log(`Server listening (port ${PORT})`);
+  } else {
+    console.log(`HTTP + Socket.io on http://localhost:${PORT}`);
+  }
 });
 
 // Rate Limiters
