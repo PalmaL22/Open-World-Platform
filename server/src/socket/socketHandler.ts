@@ -86,6 +86,9 @@ export function registerSocketHandlers(io: Server) {
         .filter((member): member is NonNullable<typeof member> => Boolean(member));
     };
 
+    const voiceRoomMembers = (serverId: string) =>
+      roomMembers(serverId).filter((member) => (member.data.voiceActive as boolean | undefined) === true);
+
     const mapPlayer = (member: ReturnType<typeof roomMembers>[number]) => ({
       socketId: member.id,
       color: (member.data.characterColor as string | undefined) ?? DEFAULT_CHARACTER_COLOR,
@@ -129,6 +132,12 @@ export function registerSocketHandlers(io: Server) {
       socket.to(roomForServer(activeServerId)).emit("player-left", {
         socketId: socket.id,
       });
+      if (socket.data.voiceActive) {
+        socket.data.voiceActive = undefined;
+        socket.to(roomForServer(activeServerId)).emit("voice:peer-left", {
+          socketId: socket.id,
+        });
+      }
       if (username) {
         emitSystemMessage(activeServerId, `${username} left the room`);
       }
@@ -333,6 +342,72 @@ export function registerSocketHandlers(io: Server) {
       const serverId = socket.data.serverId as string | undefined;
       if (!serverId) return;
       await emitPlayersSnapshot(serverId);
+    });
+
+    socket.on("voice:join", () => {
+      const serverId = socket.data.serverId as string | undefined;
+      if (!serverId) {
+        socket.emit("voice:error", { message: "Join a server before enabling voice." });
+        return;
+      }
+
+      socket.data.voiceActive = true;
+      const peers = voiceRoomMembers(serverId)
+        .filter((member) => member.id !== socket.id)
+        .map((member) => member.id);
+
+      socket.emit("voice:peers", { peers });
+      socket.to(roomForServer(serverId)).emit("voice:peer-joined", { socketId: socket.id });
+    });
+
+    socket.on("voice:leave", () => {
+      const serverId = socket.data.serverId as string | undefined;
+      if (!serverId || !socket.data.voiceActive) return;
+      socket.data.voiceActive = undefined;
+      socket.to(roomForServer(serverId)).emit("voice:peer-left", { socketId: socket.id });
+    });
+
+    socket.on("voice:offer", (payload: { to?: string; sdp?: unknown }) => {
+      const serverId = socket.data.serverId as string | undefined;
+      if (!serverId || !socket.data.voiceActive) return;
+      const to = payload?.to;
+      if (!to || !payload.sdp) return;
+      const target = io.sockets.sockets.get(to);
+      if (!target) return;
+      if (target.data.serverId !== serverId || !target.data.voiceActive) return;
+      target.emit("voice:offer", { from: socket.id, sdp: payload.sdp });
+    });
+
+    socket.on("voice:answer", (payload: { to?: string; sdp?: unknown }) => {
+      const serverId = socket.data.serverId as string | undefined;
+      if (!serverId || !socket.data.voiceActive) return;
+      const to = payload?.to;
+      if (!to || !payload.sdp) return;
+      const target = io.sockets.sockets.get(to);
+      if (!target) return;
+      if (target.data.serverId !== serverId || !target.data.voiceActive) return;
+      target.emit("voice:answer", { from: socket.id, sdp: payload.sdp });
+    });
+
+    socket.on("voice:ice-candidate", (payload: { to?: string; candidate?: unknown }) => {
+      const serverId = socket.data.serverId as string | undefined;
+      if (!serverId || !socket.data.voiceActive) return;
+      const to = payload?.to;
+      if (!to || !payload.candidate) return;
+      const target = io.sockets.sockets.get(to);
+      if (!target) return;
+      if (target.data.serverId !== serverId || !target.data.voiceActive) return;
+      target.emit("voice:ice-candidate", { from: socket.id, candidate: payload.candidate });
+    });
+
+    socket.on("voice:mute-state", (payload: { muted?: boolean }) => {
+      const serverId = socket.data.serverId as string | undefined;
+      if (!serverId || !socket.data.voiceActive) return;
+      if (typeof payload?.muted !== "boolean") return;
+      socket.to(roomForServer(serverId)).emit("voice:mute-state", {
+        socketId: socket.id,
+        muted: payload.muted,
+      });
     });
 
     socket.on("disconnect", async () => {

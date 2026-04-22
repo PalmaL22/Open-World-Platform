@@ -3,6 +3,7 @@ import { Link, Navigate, useSearchParams } from "react-router-dom";
 import type { Socket } from "socket.io-client";
 import { GameCanvas } from "../game/GameCanvas";
 import { createAuthenticatedGameSocket } from "../lib/gameSocket";
+import { VoiceChatManager } from "../lib/voiceChat";
 import { useAuthStore } from "../store/authStore";
 
 type JoinedPayload = {
@@ -46,7 +47,12 @@ export function GamePage() {
   const [chatError, setChatError] = useState<string | null>(null);
   const [remotePlayers, setRemotePlayers] = useState<Array<{ socketId: string; color?: string; x?: number; y?: number }>>([]);
   const [chatBubble, setChatBubble] = useState<{ id: string; socketId: string; content: string } | null>(null);
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [voiceMuted, setVoiceMuted] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [voicePeers, setVoicePeers] = useState<string[]>([]);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const voiceManagerRef = useRef<VoiceChatManager | null>(null);
 
   useEffect(() => {
     if (!serverId || !token) {
@@ -59,6 +65,10 @@ export function GamePage() {
     setChatEntries([]);
     setChatError(null);
     setRemotePlayers([]);
+    setVoiceEnabled(false);
+    setVoiceMuted(false);
+    setVoiceError(null);
+    setVoicePeers([]);
 
     let socket: Socket;
 
@@ -146,6 +156,26 @@ export function GamePage() {
       setRemotePlayers((prev) => prev.filter((p) => p.socketId !== payload.socketId));
     };
 
+    const onVoicePeers = (payload: { peers?: string[] }) => {
+      setVoicePeers(payload.peers ?? []);
+    };
+
+    const onVoicePeerJoined = (payload: { socketId?: string }) => {
+      const peerId = payload.socketId;
+      if (!peerId) return;
+      setVoicePeers((prev) => (prev.includes(peerId) ? prev : [...prev, peerId]));
+    };
+
+    const onVoicePeerLeft = (payload: { socketId?: string }) => {
+      const peerId = payload.socketId;
+      if (!peerId) return;
+      setVoicePeers((prev) => prev.filter((id) => id !== peerId));
+    };
+
+    const onVoiceError = (payload: { message?: string }) => {
+      setVoiceError(payload.message ?? "Voice connection failed.");
+    };
+
     socket.on("connect", onConnect);
     socket.on("joined-server", onJoined);
     socket.on("join-error", onJoinError);
@@ -158,6 +188,10 @@ export function GamePage() {
     socket.on("player-joined", onPlayerJoined);
     socket.on("player-moved", onPlayerMoved);
     socket.on("player-left", onPlayerLeft);
+    socket.on("voice:peers", onVoicePeers);
+    socket.on("voice:peer-joined", onVoicePeerJoined);
+    socket.on("voice:peer-left", onVoicePeerLeft);
+    socket.on("voice:error", onVoiceError);
     const syncInterval = window.setInterval(() => {
       socket.emit("players:sync");
     }, 3000);
@@ -176,7 +210,13 @@ export function GamePage() {
       socket.off("player-joined", onPlayerJoined);
       socket.off("player-moved", onPlayerMoved);
       socket.off("player-left", onPlayerLeft);
+      socket.off("voice:peers", onVoicePeers);
+      socket.off("voice:peer-joined", onVoicePeerJoined);
+      socket.off("voice:peer-left", onVoicePeerLeft);
+      socket.off("voice:error", onVoiceError);
       window.clearInterval(syncInterval);
+      voiceManagerRef.current?.stop();
+      voiceManagerRef.current = null;
       if (socket.connected) {
         socket.emit("leave-server", { serverId });
       }
@@ -197,6 +237,36 @@ export function GamePage() {
     if (!chatScroll) return;
     chatScroll.scrollTop = chatScroll.scrollHeight;
   }, [chatEntries]);
+
+  const enableVoice = async () => {
+    if (!gameSocket) return;
+    setVoiceError(null);
+    const manager = voiceManagerRef.current ?? new VoiceChatManager(gameSocket);
+    voiceManagerRef.current = manager;
+    try {
+      await manager.start();
+      setVoiceEnabled(true);
+      setVoiceMuted(false);
+    } catch (e) {
+      setVoiceError(e instanceof Error ? e.message : "Could not access microphone.");
+      setVoiceEnabled(false);
+    }
+  };
+
+  const disableVoice = () => {
+    voiceManagerRef.current?.stop();
+    setVoiceEnabled(false);
+    setVoiceMuted(false);
+    setVoicePeers([]);
+  };
+
+  const toggleMute = () => {
+    const manager = voiceManagerRef.current;
+    if (!manager || !voiceEnabled) return;
+    const nextMuted = !voiceMuted;
+    manager.setMuted(nextMuted);
+    setVoiceMuted(nextMuted);
+  };
 
   const sendChat = () => {
     const content = chatDraft.trim();
@@ -242,6 +312,32 @@ export function GamePage() {
           <div className="text-xs text-slate-400">
             <span className="rounded bg-slate-900/70 px-2 py-1">Remote players: {remotePlayers.length}</span>
           </div>
+          <section className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-xs text-slate-300">
+            <span className="rounded bg-slate-800 px-2 py-1">Voice peers: {voicePeers.length}</span>
+            {!voiceEnabled ? (
+              <button type="button" onClick={() => void enableVoice()} className="btn-primary px-3 py-1.5 text-xs">
+                Enable Mic
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={toggleMute}
+                  className="rounded-md border border-slate-500 bg-slate-800 px-3 py-1.5 text-xs text-slate-100 transition hover:bg-slate-700"
+                >
+                  {voiceMuted ? "Unmute" : "Mute"}
+                </button>
+                <button
+                  type="button"
+                  onClick={disableVoice}
+                  className="rounded-md border border-red-700/70 bg-red-950/50 px-3 py-1.5 text-xs text-red-200 transition hover:bg-red-900/50"
+                >
+                  Leave Voice
+                </button>
+              </>
+            )}
+            {voiceError && <span className="text-red-300">{voiceError}</span>}
+          </section>
           <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
             <GameCanvas
               socket={gameSocket}
