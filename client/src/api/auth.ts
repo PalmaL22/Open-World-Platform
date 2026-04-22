@@ -11,7 +11,7 @@ async function readError(res: Response): Promise<string> {
     const data = (await res.json()) as { error?: string };
     if (typeof data.error === "string") return data.error;
   } catch {
-    /* ignore */
+    
   }
   return "Request failed";
 }

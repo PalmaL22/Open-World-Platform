@@ -38,8 +38,8 @@ export function GameCanvas({ socket, serverId, characterColor, remotePlayers, ch
         autoCenter: Phaser.Scale.CENTER_BOTH,
       },
       render: {
-        pixelArt: false,
-        antialias: true,
+        pixelArt: true,
+        antialias: false,
       },
     });
 
