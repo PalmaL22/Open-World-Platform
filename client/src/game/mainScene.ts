@@ -88,6 +88,7 @@ export class MainScene extends Phaser.Scene {
 
   private activePopup?: Phaser.GameObjects.Container;
   private activePrompt?: Phaser.GameObjects.Text;
+  private floorLayer!: Phaser.GameObjects.TileSprite;
 
   private playRect() {
     const m = Math.max(0, Math.floor(PLAY_MARGIN));
@@ -370,12 +371,10 @@ export class MainScene extends Phaser.Scene {
   }
 
   private setupWorldLayers() {
-    this.add
-      .tileSprite(0, 0, WORLD_W, WORLD_H, FLOOR_TEX)
-      .setOrigin(0, 0)
-      .setDepth(-10)
-      .setAlpha(1);
-
+    this.floorLayer = this.add.tileSprite(0, 0, WORLD_W, WORLD_H, FLOOR_TEX);
+    this.floorLayer.setOrigin(0, 0).setDepth(-10).setAlpha(1);
+    this.socket.on("player-joined", this.onPlayerJoined);
+    
     const g = this.add.graphics().setDepth(-9);
     g.fillStyle(0x050914, 0.6);
 
@@ -794,7 +793,6 @@ export class MainScene extends Phaser.Scene {
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.socket.off("player-joined", this.onPlayerJoined);
-      this.socket.off("player-moved", this.onPlayerMoved);
 
       for (const sprite of this.remote.values()) {
         sprite.destroy();
