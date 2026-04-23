@@ -58,6 +58,8 @@ export function GamePage() {
   const [chatError, setChatError] = useState<string | null>(null);
   const [remotePlayers, setRemotePlayers] = useState<Array<{ socketId: string; color?: string; x?: number; y?: number }>>([]);
   const [chatBubble, setChatBubble] = useState<{ id: string; socketId: string; content: string } | null>(null);
+  const [boothLayout, setBoothLayout] = useState<unknown>(null);
+  const [boothLayoutLoaded, setBoothLayoutLoaded] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [voiceMuted, setVoiceMuted] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
@@ -84,6 +86,8 @@ export function GamePage() {
     setVoiceError(null);
     setVoiceParticipants([]);
     setIncomingVoiceVolumes({});
+    setBoothLayout(null);
+    setBoothLayoutLoaded(false);
 
     let socket: Socket;
 
@@ -105,6 +109,8 @@ export function GamePage() {
       setJoined(payload);
       setStatus("joined");
       setMessage(null);
+
+      socket.emit("booths:layout:get", { serverId: payload.serverId });
     };
 
     const onJoinError = (payload: { message?: string }) => {
@@ -148,6 +154,12 @@ export function GamePage() {
 
     const onPlayersSnapshot = (players: Array<{ socketId: string; color?: string; x?: number; y?: number }>) => {
       setRemotePlayers(players);
+    };
+
+    const onBoothsLayout = (payload: { serverId?: string; layout?: unknown }) => {
+      if (!payload?.serverId || payload.serverId !== serverId) return;
+      setBoothLayout(payload.layout ?? null);
+      setBoothLayoutLoaded(true);
     };
 
     const onPlayerJoined = (player: { socketId: string; color?: string; x?: number; y?: number }) => {
@@ -223,6 +235,7 @@ export function GamePage() {
     socket.on("player-joined", onPlayerJoined);
     socket.on("player-moved", onPlayerMoved);
     socket.on("player-left", onPlayerLeft);
+    socket.on("booths:layout", onBoothsLayout);
     socket.on("voice:peers", onVoicePeers);
     socket.on("voice:peer-joined", onVoicePeerJoined);
     socket.on("voice:peer-left", onVoicePeerLeft);
@@ -245,6 +258,7 @@ export function GamePage() {
       socket.off("player-joined", onPlayerJoined);
       socket.off("player-moved", onPlayerMoved);
       socket.off("player-left", onPlayerLeft);
+      socket.off("booths:layout", onBoothsLayout);
       socket.off("voice:peers", onVoicePeers);
       socket.off("voice:peer-joined", onVoicePeerJoined);
       socket.off("voice:peer-left", onVoicePeerLeft);
@@ -352,7 +366,7 @@ export function GamePage() {
         <p className="text-slate-400">Connecting to server…</p>
       )}
   
-      {status === "joined" && joined && gameSocket && (
+      {status === "joined" && joined && gameSocket && boothLayoutLoaded && (
         <div className="flex flex-col gap-4">
           <p className="text-slate-400">
             <span className="font-medium text-slate-200">{joined.username}</span> on{" "}
@@ -378,6 +392,7 @@ export function GamePage() {
                 characterColor={joined.characterColor}
                 remotePlayers={remotePlayers}
                 chatBubble={chatBubble}
+                boothLayout={boothLayout}
               />
               <div
                 ref={voiceFlyoutRef}

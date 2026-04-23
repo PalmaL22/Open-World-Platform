@@ -121,6 +121,7 @@ export class MainScene extends Phaser.Scene {
 
   private activePopup?: Phaser.GameObjects.Container;
   private activePrompt?: Phaser.GameObjects.Text;
+  private boothLayoutFromServer: unknown = null;
 
   private playRect() {
     const m = Math.max(0, Math.floor(PLAY_MARGIN));
@@ -317,12 +318,13 @@ export class MainScene extends Phaser.Scene {
     super("MainScene");
   }
 
-  init(data: { socket: Socket; serverId: string; localColorHex?: string }) {
+  init(data: { socket: Socket; serverId: string; localColorHex?: string; boothLayout?: unknown }) {
     this.socket = data.socket;
     this.serverId = data.serverId;
     if (data.localColorHex) {
       this.localColorHex = data.localColorHex;
     }
+    this.boothLayoutFromServer = data.boothLayout ?? null;
   }
 
   private bakeTexture(
@@ -562,7 +564,46 @@ export class MainScene extends Phaser.Scene {
     const posterMode = Boolean(imageKey);
     const safeActions = posterMode ? [] : (actions ?? []).filter((a) => a?.url).slice(0, 3);
     const panelW = posterMode ? 960 : 560;
-    const panelH = posterMode ? 720 : safeActions.length >= 3 ? 320 : safeActions.length === 2 ? 310 : 320;
+    const maxPanelH = Math.max(260, cam.height - 120);
+    const measureTextHeight = (txt: string, style: Phaser.Types.GameObjects.Text.TextStyle) => {
+      const t = this.add.text(-10_000, -10_000, txt, style).setVisible(false);
+      const h = t.height;
+      t.destroy();
+      return h;
+    };
+
+    const isMultiActionLayout = !posterMode && safeActions.length >= 2;
+    const titleStyle: Phaser.Types.GameObjects.Text.TextStyle = {
+      fontFamily: "system-ui, Segoe UI, sans-serif",
+      fontSize: "22px",
+      color: "#e2e8f0",
+      fontStyle: "bold",
+      align: "center",
+      wordWrap: { width: panelW - 120 },
+    };
+    const bodyStyle: Phaser.Types.GameObjects.Text.TextStyle = {
+      fontFamily: "system-ui, Segoe UI, sans-serif",
+      fontSize: "16px",
+      color: "#cbd5e1",
+      align: "center",
+      wordWrap: { width: panelW - 140 },
+      lineSpacing: 6,
+    };
+
+    const baseTextPanelH = 320;
+    const titleH = posterMode || isMultiActionLayout ? 0 : measureTextHeight(title, titleStyle);
+    const bodyH = posterMode || isMultiActionLayout ? 0 : measureTextHeight(description, bodyStyle);
+    const hasSingleAction = !posterMode && safeActions.length === 1;
+    const singleActionH = hasSingleAction ? 42 + 34 : 0; 
+    const dynamicTextPanelH = Math.ceil(32 + titleH + 18 + bodyH + singleActionH + 56);
+
+    const panelH = posterMode
+      ? 720
+      : isMultiActionLayout
+        ? safeActions.length >= 3
+          ? 320
+          : 310
+        : Math.min(maxPanelH, Math.max(280, dynamicTextPanelH, baseTextPanelH));
     const borderThickness = 3;
     const panel = sf0(
       this.add
@@ -598,31 +639,11 @@ export class MainScene extends Phaser.Scene {
       );
       parts.push(closeText);
     } else {
-      const titleText = sf0(
-        this.add
-          .text(0, -panelH / 2 + 34, title, {
-            fontFamily: "system-ui, Segoe UI, sans-serif",
-            fontSize: "22px",
-            color: "#e2e8f0",
-            fontStyle: "bold",
-            align: "center",
-            wordWrap: { width: panelW - 120 },
-          })
-          .setOrigin(0.5)
-      );
+      const titleY = -panelH / 2 + 32;
+      const titleText = sf0(this.add.text(0, titleY, title, titleStyle).setOrigin(0.5, 0));
 
-      const bodyText = sf0(
-        this.add
-          .text(0, -panelH / 2 + 86, description, {
-            fontFamily: "system-ui, Segoe UI, sans-serif",
-            fontSize: "16px",
-            color: "#cbd5e1",
-            align: "center",
-            wordWrap: { width: panelW - 140 },
-            lineSpacing: 6,
-          })
-          .setOrigin(0.5)
-      );
+      const bodyY = titleY + titleText.height + 18;
+      const bodyText = sf0(this.add.text(0, bodyY, description, bodyStyle).setOrigin(0.5, 0));
 
       if (safeActions.length) {
         if (safeActions.length >= 2) {
@@ -692,9 +713,9 @@ export class MainScene extends Phaser.Scene {
           }
         } else {
           const a = safeActions[0]!;
-          const y = 78;
           const btnW = Math.min(360, panelW - 120);
           const btnH = 42;
+          const y = bodyY + bodyText.height + 28 + btnH / 2;
 
           const btnBg = sf0(
             this.add
@@ -799,6 +820,153 @@ export class MainScene extends Phaser.Scene {
 
     this.posterBoards = [];
 
+    type SavedPosterData =
+      | { kind: "image"; imageKey: string; title: string; description: string }
+      | { kind: "text"; title: string; description: string; actionLabel?: string; actionUrl?: string }
+      | { kind: "actions"; title: string; actions: Array<{ label: string; url: string }> };
+
+    type SavedBoothLayoutV1 = {
+      v: 1;
+      serverId: string;
+      playRect: { x: number; y: number; w: number; h: number };
+      booths: Array<{
+        deskKey: string;
+        dx: number;
+        dy: number;
+        accent: number;
+        npc: { x: number; y: number; tint: number };
+        poster?: { x: number; y: number; data: SavedPosterData };
+        monitor?: { x: number; y: number; tint: number };
+        banner?: { x: number; y: number; tint: number };
+        pedestal?: { x: number; y: number };
+        floorLogos?: Array<{
+          texKey: string;
+          x: number;
+          y: number;
+          originX: number;
+          originY: number;
+          depth: number;
+          scale: number;
+          alpha: number;
+          tint?: number;
+        }>;
+      }>;
+    };
+
+    const pr = this.playRect();
+    const storageKey = `owp:boothLayout:v1:${this.serverId}`;
+    const loadSavedLayout = (): SavedBoothLayoutV1 | null => {
+      try {
+        if (this.boothLayoutFromServer && typeof this.boothLayoutFromServer === "object") {
+          const parsed = this.boothLayoutFromServer as SavedBoothLayoutV1;
+          if (parsed?.v === 1 && parsed.serverId === this.serverId && parsed.playRect?.w === pr.w && parsed.playRect?.h === pr.h) {
+            return parsed;
+          }
+        }
+
+        const raw = window.localStorage.getItem(storageKey);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as SavedBoothLayoutV1;
+        if (!parsed || parsed.v !== 1) return null;
+        if (parsed.serverId !== this.serverId) return null;
+        const r = parsed.playRect;
+        if (!r || r.w !== pr.w || r.h !== pr.h || r.x !== pr.x || r.y !== pr.y) return null;
+        if (!Array.isArray(parsed.booths) || parsed.booths.length === 0) return null;
+        return parsed;
+      } catch {
+        return null;
+      }
+    };
+
+    const applySavedLayout = (layout: SavedBoothLayoutV1) => {
+      for (const b of layout.booths) {
+        const desk = this.physics.add.staticSprite(b.dx, b.dy, b.deskKey);
+        desk.setDepth(b.dy + 2);
+        desk.setData("kind", "desk");
+        desk.setData("serverId", this.serverId);
+        desk.setData("accent", b.accent);
+        desk.refreshBody();
+        const body = desk.body as Phaser.Physics.Arcade.StaticBody;
+        if (b.deskKey === DESK_S_TEX) {
+          body.setSize(68, 28);
+          body.setOffset(4, 24);
+        } else if (b.deskKey === DESK_M_TEX) {
+          body.setSize(96, 28);
+          body.setOffset(4, 26);
+        } else {
+          body.setSize(132, 28);
+          body.setOffset(4, 28);
+        }
+        desk.refreshBody();
+        this.obstacles.add(desk);
+
+        const npc = this.add.sprite(b.npc.x, b.npc.y, PERSON_TEX);
+        npc.setDepth(b.dy + 1);
+        npc.setTint(b.npc.tint);
+        this.npcs.push(npc);
+
+        if (b.poster) {
+          const poster = this.add.sprite(b.poster.x, b.poster.y, PROP_POSTER_BOARD_TEX);
+          poster.setDepth(b.poster.y - 10);
+          const d = b.poster.data;
+          if (d.kind === "image") {
+            poster.setData("imageKey", d.imageKey);
+            poster.setData("title", d.title);
+            poster.setData("description", d.description);
+          } else if (d.kind === "actions") {
+            poster.setData("title", d.title);
+            poster.setData("actions", d.actions);
+          } else {
+            poster.setData("title", d.title);
+            poster.setData("description", d.description);
+            if (d.actionUrl) {
+              poster.setData("actionUrl", d.actionUrl);
+              poster.setData("actionLabel", d.actionLabel ?? "More info");
+            }
+          }
+          this.props.push(poster);
+          this.posterBoards.push(poster);
+        }
+
+        if (b.monitor) {
+          const monitor = this.add.sprite(b.monitor.x, b.monitor.y, PROP_MONITOR_TEX);
+          monitor.setDepth(b.dy + 3);
+          monitor.setTint(b.monitor.tint);
+          this.props.push(monitor);
+        }
+        if (b.banner) {
+          const banner = this.add.sprite(b.banner.x, b.banner.y, PROP_BANNER_TEX);
+          banner.setDepth(b.dy + 1);
+          banner.setTint(b.banner.tint);
+          this.props.push(banner);
+        }
+        if (b.pedestal) {
+          const pedestal = this.add.sprite(b.pedestal.x, b.pedestal.y, PROP_PEDESTAL_TEX);
+          pedestal.setDepth(b.dy + 2);
+          this.props.push(pedestal);
+        }
+
+        if (b.floorLogos?.length) {
+          for (const fl of b.floorLogos) {
+            const s = this.add.sprite(fl.x, fl.y, fl.texKey);
+            s.setOrigin(fl.originX, fl.originY);
+            s.setDepth(fl.depth);
+            s.setScale(fl.scale);
+            s.setAlpha(fl.alpha);
+            s.setAngle(0);
+            if (typeof fl.tint === "number") s.setTint(fl.tint);
+            this.props.push(s);
+          }
+        }
+      }
+    };
+
+    const saved = loadSavedLayout();
+    if (saved) {
+      applySavedLayout(saved);
+      return;
+    }
+
     const posterKeepOut: Phaser.Geom.Rectangle[] = [];
     const textureSize = (key: string): { w: number; h: number } => {
       switch (key) {
@@ -854,7 +1022,6 @@ export class MainScene extends Phaser.Scene {
       return { x, y, ok: false };
     };
 
-    const pr = this.playRect();
     const rnd = this.boothRng;
 
     const cols = 5;
@@ -908,6 +1075,13 @@ export class MainScene extends Phaser.Scene {
     const themeOrder = shuffleIndices(themeCount, rnd);
     const uniquePosterSlots = Math.min(1 + themeCount + SPECIAL_POSTER_COUNT, booths.length);
 
+    const layoutToSave: SavedBoothLayoutV1 = {
+      v: 1,
+      serverId: this.serverId,
+      playRect: { x: pr.x, y: pr.y, w: pr.w, h: pr.h },
+      booths: [],
+    };
+
     for (let bi = 0; bi < booths.length; bi++) {
       const p = booths[bi]!;
       const roll = rnd();
@@ -946,8 +1120,17 @@ export class MainScene extends Phaser.Scene {
         PERSON_TEX
       );
       npc.setDepth(dy + 1);
-      npc.setTint((0x808080 + Math.floor(rnd() * 0x7f7f7f)) & 0xffffff);
+      const npcTint = (0x808080 + Math.floor(rnd() * 0x7f7f7f)) & 0xffffff;
+      npc.setTint(npcTint);
       this.npcs.push(npc);
+
+      const boothSave: SavedBoothLayoutV1["booths"][number] = {
+        deskKey,
+        dx,
+        dy,
+        accent,
+        npc: { x: npc.x, y: npc.y, tint: npcTint },
+      };
 
       let hasPosterBoard = false;
       let posterSideForBooth: number | undefined;
@@ -963,31 +1146,55 @@ export class MainScene extends Phaser.Scene {
           poster.setData("imageKey", "posterExample");
           poster.setData("title", "Poster Example");
           poster.setData("description", "Example of a real poster image displayed in the popup.");
+          boothSave.poster = {
+            x: posterX,
+            y: posterY,
+            data: {
+              kind: "image",
+              imageKey: "posterExample",
+              title: "Poster Example",
+              description: "Example of a real poster image displayed in the popup.",
+            },
+          };
         } else if (bi === SPONSOR_BOOTH_INDEX) {
-          poster.setData("title", "Vita Coco — sponsor information");
-          poster.setData(
-            "description",
+          const t = "Vita Coco — sponsor information";
+          const d =
             "Vita Coco coconut water is one of our conference hydration sponsors. " +
-              "It is naturally a source of electrolytes like potassium, which supports everyday hydration. " +
-              "Attendees often reach for it when they want to feel refreshed—and for that post-coffee, post-catering reset people half-jokingly call their “deblotating” drink."
-          );
+            "It is naturally a source of electrolytes like potassium, which supports everyday hydration. " +
+            "Attendees often reach for it when they want to feel refreshed—and for that post-coffee, post-catering reset people half-jokingly call their “deblotating” drink.";
+          poster.setData("title", t);
+          poster.setData("description", d);
+          boothSave.poster = { x: posterX, y: posterY, data: { kind: "text", title: t, description: d } };
         } else if (bi === CAHSI_BOOTH_INDEX) {
-          poster.setData("title", "Join the CAHSI Alliance");
-          poster.setData(
-            "description",
+          const t = "Join the CAHSI Alliance";
+          const d =
             "The Computing Alliance of Hispanic-Serving Institutions (CAHSI) is a national network dedicated to helping students succeed in computer science and technology fields. " +
-              "By joining, you gain access to research opportunities, internships with top companies, mentorship from experienced professionals, and resources to prepare for graduate school.\n\n"
-          );
-          poster.setData("actionLabel", "More info");
-          poster.setData("actionUrl", "https://cahsi.utep.edu/");
+            "By joining, you gain access to research opportunities, internships with top companies, mentorship from experienced professionals, and resources to prepare for graduate school.\n\n";
+          const actionLabel = "More info";
+          const actionUrl = "https://cahsi.utep.edu/";
+          poster.setData("title", t);
+          poster.setData("description", d);
+          poster.setData("actionLabel", actionLabel);
+          poster.setData("actionUrl", actionUrl);
+          boothSave.poster = {
+            x: posterX,
+            y: posterY,
+            data: { kind: "text", title: t, description: d, actionLabel, actionUrl },
+          };
         } else if (bi === LINKEDIN_BOOTH_INDEX) {
           poster.setData("title", "Connect with us on LinkedIn!");
           
-          poster.setData("actions", [
+          const acts = [
             { label: "Jonathan Conde", url: "https://www.linkedin.com/in/condejonathan/" },
             { label: "Felipe Monsalvo", url: "https://www.linkedin.com/in/felipe-monsalvo/" },
             { label: "Luis Palma", url: "https://www.linkedin.com/in/palmaluis/" },
-          ]);
+          ];
+          poster.setData("actions", acts);
+          boothSave.poster = {
+            x: posterX,
+            y: posterY,
+            data: { kind: "actions", title: "Connect with us on LinkedIn!", actions: acts },
+          };
         } else {
           const specialsBefore =
             (SPONSOR_BOOTH_INDEX > 0 && SPONSOR_BOOTH_INDEX < bi ? 1 : 0) +
@@ -995,8 +1202,11 @@ export class MainScene extends Phaser.Scene {
             (LINKEDIN_BOOTH_INDEX > 0 && LINKEDIN_BOOTH_INDEX < bi ? 1 : 0);
           const themeSlot = bi - 1 - specialsBefore;
           const themeIdx = themeOrder[themeSlot]!;
-          poster.setData("title", boothTitles[themeIdx]!);
-          poster.setData("description", boothDescriptions[themeIdx]!);
+          const t = boothTitles[themeIdx]!;
+          const d = boothDescriptions[themeIdx]!;
+          poster.setData("title", t);
+          poster.setData("description", d);
+          boothSave.poster = { x: posterX, y: posterY, data: { kind: "text", title: t, description: d } };
         }
         this.props.push(poster);
         this.posterBoards.push(poster);
@@ -1016,6 +1226,7 @@ export class MainScene extends Phaser.Scene {
           monitor.setDepth(dy + 3);
           monitor.setTint(accent);
           this.props.push(monitor);
+          boothSave.monitor = { x: nudged.x, y: nudged.y, tint: accent };
         }
       }
 
@@ -1032,6 +1243,7 @@ export class MainScene extends Phaser.Scene {
           banner.setDepth(dy + 1);
           banner.setTint(accent);
           this.props.push(banner);
+          boothSave.banner = { x: nudged.x, y: nudged.y, tint: accent };
         }
       }
 
@@ -1044,8 +1256,11 @@ export class MainScene extends Phaser.Scene {
           const pedestal = this.add.sprite(nudged.x, nudged.y, PROP_PEDESTAL_TEX);
           pedestal.setDepth(dy + 2);
           this.props.push(pedestal);
+          boothSave.pedestal = { x: nudged.x, y: nudged.y };
         }
       }
+
+      layoutToSave.booths.push(boothSave);
 
       if (bi === SPONSOR_BOOTH_INDEX && this.textures.exists(VITA_COCO_TEX)) {
         const vy = dy + 44;
@@ -1065,6 +1280,31 @@ export class MainScene extends Phaser.Scene {
         floorLogo.setAlpha(0.82);
         floorLogo.setAngle(0);
         this.props.push(floorLogo);
+
+        boothSave.floorLogos ??= [];
+        boothSave.floorLogos.push(
+          {
+            texKey: VITA_COCO_TEX,
+            x: dx + 3,
+            y: vy + 3,
+            originX: 0.5,
+            originY: 0.25,
+            depth: dy - 0.1,
+            scale: 0.205,
+            alpha: 0.28,
+            tint: 0x000000,
+          },
+          {
+            texKey: VITA_COCO_TEX,
+            x: dx,
+            y: vy,
+            originX: 0.5,
+            originY: 0.25,
+            depth: dy,
+            scale: 0.19,
+            alpha: 0.82,
+          }
+        );
       }
 
       if (bi === CAHSI_BOOTH_INDEX && this.textures.exists(CAHSI_TEX)) {
@@ -1085,6 +1325,31 @@ export class MainScene extends Phaser.Scene {
         floorLogo.setAlpha(0.82);
         floorLogo.setAngle(0);
         this.props.push(floorLogo);
+
+        boothSave.floorLogos ??= [];
+        boothSave.floorLogos.push(
+          {
+            texKey: CAHSI_TEX,
+            x: dx + 3,
+            y: vy + 3,
+            originX: 0.5,
+            originY: 0.25,
+            depth: dy - 0.1,
+            scale: 0.054,
+            alpha: 0.28,
+            tint: 0x000000,
+          },
+          {
+            texKey: CAHSI_TEX,
+            x: dx,
+            y: vy,
+            originX: 0.5,
+            originY: 0.25,
+            depth: dy,
+            scale: 0.05,
+            alpha: 0.82,
+          }
+        );
       }
 
       if (bi === LINKEDIN_BOOTH_INDEX && this.textures.exists(LINKEDIN_TEX)) {
@@ -1105,7 +1370,42 @@ export class MainScene extends Phaser.Scene {
         floorLogo.setAlpha(0.92);
         floorLogo.setAngle(0);
         this.props.push(floorLogo);
+
+        boothSave.floorLogos ??= [];
+        boothSave.floorLogos.push(
+          {
+            texKey: LINKEDIN_TEX,
+            x: dx,
+            y: vy,
+            originX: 0.44,
+            originY: 0.43,
+            depth: dy - 0.1,
+            scale: 0.08,
+            alpha: 0.22,
+            tint: 0x000000,
+          },
+          {
+            texKey: LINKEDIN_TEX,
+            x: dx,
+            y: vy,
+            originX: 0.44,
+            originY: 0.43,
+            depth: dy,
+            scale: 0.08,
+            alpha: 0.92,
+          }
+        );
       }
+    }
+
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify(layoutToSave));
+    } catch {
+    }
+
+    try {
+      this.socket.emit("booths:layout:set", { serverId: this.serverId, layout: layoutToSave });
+    } catch {
     }
   }
  
