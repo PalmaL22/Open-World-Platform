@@ -1,6 +1,12 @@
 import type { Socket } from "socket.io-client";
 
-type VoicePeersPayload = { peers?: string[] };
+export type VoicePeerDescriptor = {
+  socketId: string;
+  username?: string;
+  characterColor?: string;
+};
+
+type VoicePeersPayload = { peers?: Array<VoicePeerDescriptor | string> };
 type VoicePeerPayload = { socketId?: string };
 type VoiceOfferPayload = { from?: string; sdp?: RTCSessionDescriptionInit };
 type VoiceAnswerPayload = { from?: string; sdp?: RTCSessionDescriptionInit };
@@ -13,10 +19,29 @@ export class VoiceChatManager {
   private localStream: MediaStream | null = null;
   private readonly peerConnections = new Map<string, RTCPeerConnection>();
   private readonly remoteAudio = new Map<string, HTMLAudioElement>();
+  private readonly incomingVolumes = new Map<string, number>();
   private started = false;
 
+  private static clampUnitVolume(v: number): number {
+    if (!Number.isFinite(v)) return 1;
+    return Math.min(1, Math.max(0, v));
+  }
+
+  private applyIncomingVolume(peerId: string, audio: HTMLAudioElement) {
+    audio.volume = VoiceChatManager.clampUnitVolume(this.incomingVolumes.get(peerId) ?? 1);
+  }
+
+  public setIncomingVolume(peerId: string, volume: number) {
+    const v = VoiceChatManager.clampUnitVolume(volume);
+    this.incomingVolumes.set(peerId, v);
+    const audio = this.remoteAudio.get(peerId);
+    if (audio) audio.volume = v;
+  }
+
   private readonly onVoicePeers = (payload: VoicePeersPayload) => {
-    for (const peerId of payload.peers ?? []) {
+    for (const entry of payload.peers ?? []) {
+      const peerId = typeof entry === "string" ? entry : entry.socketId;
+      if (!peerId) continue;
       void this.ensurePeer(peerId, true);
     }
   };
@@ -95,6 +120,7 @@ export class VoiceChatManager {
       track.stop();
     }
     this.localStream = null;
+    this.incomingVolumes.clear();
     this.started = false;
   }
 
@@ -139,14 +165,15 @@ export class VoiceChatManager {
       const existingAudio = this.remoteAudio.get(peerId);
       if (existingAudio) {
         existingAudio.srcObject = stream;
+        this.applyIncomingVolume(peerId, existingAudio);
         return;
       }
       const audio = new Audio();
       audio.autoplay = true;
       audio.srcObject = stream;
+      this.applyIncomingVolume(peerId, audio);
       this.remoteAudio.set(peerId, audio);
       void audio.play().catch(() => {
-        // Playback can be blocked until user gesture in some browsers.
       });
     };
 
@@ -179,5 +206,6 @@ export class VoiceChatManager {
       audio.srcObject = null;
       this.remoteAudio.delete(peerId);
     }
+    this.incomingVolumes.delete(peerId);
   }
 }

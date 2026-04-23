@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import type { Socket } from "socket.io-client";
 import { VIEW_H, VIEW_W } from "./gameWorld";
 import { MainScene } from "./mainScene";
@@ -16,9 +16,15 @@ export function GameCanvas({ socket, serverId, characterColor, remotePlayers, ch
   const parentRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const parent = parentRef.current;
     if (!parent) return;
+
+    const w = parent.clientWidth;
+    const h = parent.clientHeight;
+    if (w <= 0 || h <= 0) {
+      return;
+    }
 
     const game = new Phaser.Game({
       type: Phaser.AUTO,
@@ -35,7 +41,11 @@ export function GameCanvas({ socket, serverId, characterColor, remotePlayers, ch
       scene: [],
       scale: {
         mode: Phaser.Scale.FIT,
-        autoCenter: Phaser.Scale.CENTER_BOTH,
+       
+        autoCenter: Phaser.Scale.NO_CENTER,
+        parent,
+        width: w,
+        height: h,
       },
       render: {
         pixelArt: true,
@@ -56,7 +66,7 @@ export function GameCanvas({ socket, serverId, characterColor, remotePlayers, ch
     };
   }, [socket, serverId, characterColor]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const game = gameRef.current;
     if (!game) return;
     const scene = game.scene.getScene("MainScene") as MainScene;
@@ -64,7 +74,7 @@ export function GameCanvas({ socket, serverId, characterColor, remotePlayers, ch
     scene.applyRemoteSnapshot(remotePlayers);
   }, [remotePlayers]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!chatBubble) return;
     const game = gameRef.current;
     if (!game) return;
@@ -82,7 +92,7 @@ export function GameCanvas({ socket, serverId, characterColor, remotePlayers, ch
           active.blur();
         }
       }}
-      className="mx-auto aspect-[4/3] w-full max-w-[840px] overflow-hidden rounded-lg border border-slate-700 bg-slate-950 shadow-lg"
+      className="h-full min-h-0 w-full min-w-0 overflow-hidden rounded-lg border border-slate-700 bg-slate-950 shadow-lg"
     />
   );
 }

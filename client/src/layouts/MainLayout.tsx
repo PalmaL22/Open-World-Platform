@@ -19,7 +19,7 @@ export function MainLayout() {
       <AmbientBackground />
       <div className="relative z-10 flex min-h-screen flex-col">
         <header className="border-b border-white/10 bg-slate-950/55 backdrop-blur-md">
-          <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-4">
+          <div className="mx-auto flex max-w-screen-2xl items-center justify-between gap-4 px-4 py-4">
             <BrandLogo to="/" size="sm" />
             <nav className="flex flex-1 items-center justify-center gap-1 sm:justify-end">
               <NavLink to="/" end className={navLinkClass}>
@@ -38,7 +38,7 @@ export function MainLayout() {
             </button>
           </div>
         </header>
-        <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 py-10 sm:px-6">
+        <main className="mx-auto flex w-full max-w-screen-2xl flex-1 flex-col px-4 py-6 sm:px-6">
           <Outlet />
         </main>
       </div>

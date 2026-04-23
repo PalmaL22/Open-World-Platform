@@ -15,5 +15,4 @@ main().catch((e) => {
     process.exit(1);
   })
   
-  // Disconnect from the database
   .finally(() => prisma.$disconnect());
