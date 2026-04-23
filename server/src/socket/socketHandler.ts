@@ -56,6 +56,7 @@ export function registerSocketHandlers(io: Server) {
             select: {
               id: true,
               username: true,
+              character: { select: { color: true } },
             },
           },
         },
@@ -69,6 +70,7 @@ export function registerSocketHandlers(io: Server) {
           id: message.id,
           content: message.content,
           createdAt: message.createdAt.toISOString(),
+          characterColor: message.user.character?.color ?? DEFAULT_CHARACTER_COLOR,
           user: {
             id: message.user.id,
             username: message.user.username,
@@ -322,11 +324,14 @@ export function registerSocketHandlers(io: Server) {
           },
         });
 
+        const characterColor =
+          (socket.data.characterColor as string | undefined) ?? DEFAULT_CHARACTER_COLOR;
         io.to(roomForServer(serverId)).emit("chat:message", {
           id: message.id,
           socketId: socket.id,
           content: message.content,
           createdAt: message.createdAt.toISOString(),
+          characterColor,
           user: {
             id: userId,
             username: username ?? "Unknown",
@@ -354,10 +359,18 @@ export function registerSocketHandlers(io: Server) {
       socket.data.voiceActive = true;
       const peers = voiceRoomMembers(serverId)
         .filter((member) => member.id !== socket.id)
-        .map((member) => member.id);
+        .map((member) => ({
+          socketId: member.id,
+          username: (member.data.username as string | undefined) ?? "Unknown",
+          characterColor: (member.data.characterColor as string | undefined) ?? undefined,
+        }));
 
       socket.emit("voice:peers", { peers });
-      socket.to(roomForServer(serverId)).emit("voice:peer-joined", { socketId: socket.id });
+      socket.to(roomForServer(serverId)).emit("voice:peer-joined", {
+        socketId: socket.id,
+        username: (socket.data.username as string | undefined) ?? "Unknown",
+        characterColor: (socket.data.characterColor as string | undefined) ?? undefined,
+      });
     });
 
     socket.on("voice:leave", () => {

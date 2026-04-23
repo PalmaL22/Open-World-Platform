@@ -16,6 +16,30 @@ const PROP_MONITOR_TEX = "propMonitor";
 const PROP_BANNER_TEX = "propBanner";
 const PROP_PEDESTAL_TEX = "propPedestal";
 const PROP_POSTER_BOARD_TEX = "propPosterBoard";
+const VITA_COCO_TEX = "vitaCoco";
+const CAHSI_TEX = "cahsi";
+const LINKEDIN_TEX = "linkedIn";
+const SPONSOR_BOOTH_INDEX = 2;
+const CAHSI_BOOTH_INDEX = 1;
+const LINKEDIN_BOOTH_INDEX = 3;
+const SPECIAL_POSTER_COUNT = 3;
+
+const CHAT_STACK_MAX = 2;
+const BUBBLE_BASE_OFF = 48;
+const BUBBLE_STACK_GAP = 8;
+const BUBBLE_FADE_MS = 6000;
+const CHAT_BUBBLE_TTL_MS = 7000;
+
+function shuffleIndices(n: number, rnd: () => number): number[] {
+  const arr = Array.from({ length: n }, (_, i) => i);
+  for (let i = n - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    const t = arr[i]!;
+    arr[i] = arr[j]!;
+    arr[j] = t;
+  }
+  return arr;
+}
 
 function mulberry32(seed: number) {
   let t = seed >>> 0;
@@ -63,6 +87,12 @@ type Wasd = {
   D: Phaser.Input.Keyboard.Key;
 };
 
+type ChatBubbleEntry = {
+  text: Phaser.GameObjects.Text;
+  expiresAt: number;
+  fadeTween?: Phaser.Tweens.Tween;
+};
+
 export class MainScene extends Phaser.Scene {
   private socket!: Socket;
   private serverId!: string;
@@ -76,8 +106,10 @@ export class MainScene extends Phaser.Scene {
   private localBody!: Phaser.Physics.Arcade.Body;
   private remote = new Map<string, Phaser.GameObjects.Sprite>();
   private remoteTargets = new Map<string, { x: number; y: number }>();
-  private remoteBubbles = new Map<string, { text: Phaser.GameObjects.Text; expiresAt: number }>();
-  private localBubble?: { text: Phaser.GameObjects.Text; expiresAt: number };
+  private remoteBubbles = new Map<string, ChatBubbleEntry[]>();
+  private localBubbleStack: ChatBubbleEntry[] = [];
+  private pendingRemoteSnapshot: Array<{ socketId: string; color?: string; x?: number; y?: number }> | null = null;
+  private pendingRemoteJoins: Array<{ socketId: string; color?: string; x?: number; y?: number }> = [];
   private lastEmit = 0;
   private localColorHex = "#3498db";
 
@@ -114,6 +146,13 @@ export class MainScene extends Phaser.Scene {
   private onPlayerJoined = (payload: { socketId: string; color?: string; x?: number; y?: number }) => {
     if (payload.socketId === this.socket.id) return;
     if (this.remote.has(payload.socketId)) return;
+
+  
+    if (!this.textures.exists(PLAYER_TEX)) {
+      this.pendingRemoteJoins.push(payload);
+      return;
+    }
+
     const fallback = offsetFromSocketId(payload.socketId);
     const x = typeof payload.x === "number" ? payload.x : this.localPlayer.x + fallback.dx;
     const y = typeof payload.y === "number" ? payload.y : this.localPlayer.y + fallback.dy;
@@ -122,42 +161,130 @@ export class MainScene extends Phaser.Scene {
     this.remoteTargets.set(payload.socketId, { x, y });
   };
 
+  private destroyChatEntry(entry: ChatBubbleEntry) {
+    entry.fadeTween?.stop();
+    entry.fadeTween = undefined;
+    if (entry.text?.active) {
+      entry.text.destroy();
+    }
+  }
+
+  private clearChatStack(stack: ChatBubbleEntry[]) {
+    for (const e of stack) {
+      this.destroyChatEntry(e);
+    }
+    stack.length = 0;
+  }
+
+  private removeChatEntryIfPresent(stack: ChatBubbleEntry[], entry: ChatBubbleEntry) {
+    const i = stack.indexOf(entry);
+    if (i < 0) return;
+    this.destroyChatEntry(entry);
+    stack.splice(i, 1);
+  }
+
+  private applyChatStackLayout(
+    stack: ChatBubbleEntry[],
+    getNewestBottom: () => { x: number; y: number },
+  ) {
+    if (stack.length === 0) return;
+    if (stack.length === 1) {
+      const p = getNewestBottom();
+      stack[0].text.setPosition(p.x, p.y);
+      return;
+    }
+    const oldest = stack[0].text;
+    const newest = stack[1].text;
+    const p = getNewestBottom();
+    newest.setPosition(p.x, p.y);
+    oldest.setPosition(p.x, p.y - newest.height - BUBBLE_STACK_GAP);
+  }
+
+  private pushMessageOntoStack(
+    stack: ChatBubbleEntry[],
+    displayText: string,
+    style: Phaser.Types.GameObjects.Text.TextStyle,
+    getNewestBottom: () => { x: number; y: number },
+  ) {
+    if (stack.length >= CHAT_STACK_MAX) {
+      const evicted = stack.shift()!;
+      this.destroyChatEntry(evicted);
+    }
+
+    if (stack.length === 1) {
+      const prev = stack[0];
+      prev.fadeTween?.stop();
+      prev.text.setAlpha(1);
+      const tw = this.tweens.add({
+        targets: prev.text,
+        alpha: 0,
+        duration: BUBBLE_FADE_MS,
+        onComplete: () => {
+          this.removeChatEntryIfPresent(stack, prev);
+        },
+      });
+      prev.fadeTween = tw;
+    }
+
+    const p = getNewestBottom();
+    const text = this.add
+      .text(p.x, p.y, displayText, style)
+      .setOrigin(0.5, 1)
+      .setDepth(3000)
+      .setAlpha(1);
+    const expiresAt =
+      stack.length > 0
+        ? stack[0]!.expiresAt
+        : this.time.now + CHAT_BUBBLE_TTL_MS;
+    stack.push({ text, expiresAt });
+    this.applyChatStackLayout(stack, getNewestBottom);
+  }
+
   public showChatBubble(payload: { socketId: string; content: string }) {
-    const clipped = payload.content.length > 36 ? `${payload.content.slice(0, 36)}...` : payload.content;
-    const expiresAt = this.time.now + 2600;
+    const displayText = payload.content;
+    const maxBubbleWidth = 240;
     const baseStyle: Phaser.Types.GameObjects.Text.TextStyle = {
       fontFamily: "system-ui, Segoe UI, sans-serif",
-      fontSize: "12px",
+      fontSize: "14px",
       color: "#e2e8f0",
       backgroundColor: "#0f172acc",
-      padding: { x: 6, y: 3 },
+      padding: { x: 8, y: 5 },
       align: "center",
+      wordWrap: { width: maxBubbleWidth, useAdvancedWrap: true },
     };
 
     if (payload.socketId === this.socket.id) {
-      this.localBubble?.text.destroy();
-      const text = this.add.text(this.localPlayer.x, this.localPlayer.y - 42, clipped, baseStyle).setOrigin(0.5, 1).setDepth(3000);
-      this.localBubble = { text, expiresAt };
+      this.pushMessageOntoStack(this.localBubbleStack, displayText, baseStyle, () => ({
+        x: this.localPlayer.x,
+        y: this.localPlayer.y - BUBBLE_BASE_OFF,
+      }));
       return;
     }
 
     const remote = this.remote.get(payload.socketId);
     if (!remote) return;
-    const existing = this.remoteBubbles.get(payload.socketId);
-    existing?.text.destroy();
-    const text = this.add.text(remote.x, remote.y - 42, clipped, baseStyle).setOrigin(0.5, 1).setDepth(3000);
-    this.remoteBubbles.set(payload.socketId, { text, expiresAt });
+    const stack = this.remoteBubbles.get(payload.socketId) ?? [];
+    this.pushMessageOntoStack(stack, displayText, baseStyle, () => ({
+      x: remote.x,
+      y: remote.y - BUBBLE_BASE_OFF,
+    }));
+    this.remoteBubbles.set(payload.socketId, stack);
   }
 
   public applyRemoteSnapshot(players: Array<{ socketId: string; color?: string; x?: number; y?: number }>) {
+    if (!this.textures.exists(PLAYER_TEX)) {
+      this.pendingRemoteSnapshot = players;
+      return;
+    }
+
     const liveIds = new Set(players.map((p) => p.socketId));
     for (const [socketId, sprite] of this.remote.entries()) {
       if (!liveIds.has(socketId)) {
         sprite.destroy();
         this.remote.delete(socketId);
         this.remoteTargets.delete(socketId);
-        const bubble = this.remoteBubbles.get(socketId);
-        bubble?.text.destroy();
+        const st = this.remoteBubbles.get(socketId);
+        if (st) this.clearChatStack(st);
         this.remoteBubbles.delete(socketId);
       }
     }
@@ -180,7 +307,10 @@ export class MainScene extends Phaser.Scene {
 
   preload() {
     this.load.image("keanLogo", "/keanLogo.png");
-    this.load.image("posterExample", "/posterExample.jpg");
+    this.load.image("posterExample", "/posterExample.PNG");
+    this.load.image(VITA_COCO_TEX, "/vitaCoco.png");
+    this.load.image(CAHSI_TEX, "/cahsi.png");
+    this.load.image(LINKEDIN_TEX, "/linkedIn.png");
   }
 
   constructor() {
@@ -409,7 +539,12 @@ export class MainScene extends Phaser.Scene {
     return nearest;
   }
 
-  private showPosterPopup(title: string, description: string, imageKey?: string) {
+  private showPosterPopup(
+    title: string,
+    description: string,
+    imageKey?: string,
+    actions?: Array<{ label: string; url: string }>
+  ) {
     this.closePosterPopup();
 
     const cam = this.cameras.main;
@@ -417,65 +552,200 @@ export class MainScene extends Phaser.Scene {
     const cy = cam.height / 2;
 
     const container = this.add.container(cx, cy).setScrollFactor(0).setDepth(100_000);
+    const sf0 = <T extends Phaser.GameObjects.GameObject>(obj: T): T => {
+      (obj as unknown as { setScrollFactor?: (x: number, y?: number) => void }).setScrollFactor?.(0);
+      return obj;
+    };
 
-    const overlay = this.add.rectangle(0, 0, cam.width, cam.height, 0x000000, 0.45);
+    const overlay = sf0(this.add.rectangle(0, 0, cam.width, cam.height, 0x000000, 0.45));
 
-    const hasImage = Boolean(imageKey);
-    const panelW = hasImage ? 760 : 520;
-    const panelH = hasImage ? 600 : 300;
-    const panel = this.add.rectangle(0, 0, panelW, panelH, 0x1e1b16, 0.96).setStrokeStyle(3, 0xc27a45, 1);
+    const posterMode = Boolean(imageKey);
+    const safeActions = posterMode ? [] : (actions ?? []).filter((a) => a?.url).slice(0, 3);
+    const panelW = posterMode ? 960 : 560;
+    const panelH = posterMode ? 720 : safeActions.length >= 3 ? 320 : safeActions.length === 2 ? 310 : 320;
+    const borderThickness = 3;
+    const panel = sf0(
+      this.add
+        .rectangle(0, 0, panelW, panelH, 0x0b1220, 0.965)
+        .setStrokeStyle(borderThickness, 0x60a5fa, 0.9)
+    );
 
-    const titleText = this.add
-      .text(0, hasImage ? -258 : -108, title, {
-        fontFamily: "system-ui, Segoe UI, sans-serif",
-        fontSize: "22px",
-        color: "#f8ead6",
-        fontStyle: "bold",
-        align: "center",
-        wordWrap: { width: hasImage ? 440 : 340 },
-      })
-      .setOrigin(0.5);
+    const innerW = panelW - borderThickness * 2;
+    const innerH = panelH - borderThickness * 2;
 
-    let posterImage: Phaser.GameObjects.Image | undefined;
-    if (imageKey) {
-  
+    const parts: Phaser.GameObjects.GameObject[] = [overlay, panel];
+
+    if (posterMode && imageKey) {
       this.textures.get(imageKey).setFilter(Phaser.Textures.FilterMode.LINEAR);
 
-      posterImage = this.add.image(0, -40, imageKey);
-      posterImage.setOrigin(0.5);
-
+      const posterImage = sf0(this.add.image(0, 0, imageKey).setOrigin(0.5));
       const tex = posterImage.texture;
       const srcW = tex.getSourceImage().width || 1;
       const srcH = tex.getSourceImage().height || 1;
-      const maxW = 700;
-      const maxH = 390;
-      const scale = Math.min(1, maxW / srcW, maxH / srcH);
+      const scale = Math.min(innerW / srcW, innerH / srcH);
       posterImage.setScale(scale);
+      parts.push(posterImage);
+
+      const closeText = sf0(
+        this.add
+          .text(0, panelH / 2 + 24, "Press E or ESC to close", {
+            fontFamily: "system-ui, Segoe UI, sans-serif",
+            fontSize: "14px",
+            color: "#d6b48a",
+            align: "center",
+          })
+          .setOrigin(0.5)
+      );
+      parts.push(closeText);
+    } else {
+      const titleText = sf0(
+        this.add
+          .text(0, -panelH / 2 + 34, title, {
+            fontFamily: "system-ui, Segoe UI, sans-serif",
+            fontSize: "22px",
+            color: "#e2e8f0",
+            fontStyle: "bold",
+            align: "center",
+            wordWrap: { width: panelW - 120 },
+          })
+          .setOrigin(0.5)
+      );
+
+      const bodyText = sf0(
+        this.add
+          .text(0, -panelH / 2 + 86, description, {
+            fontFamily: "system-ui, Segoe UI, sans-serif",
+            fontSize: "16px",
+            color: "#cbd5e1",
+            align: "center",
+            wordWrap: { width: panelW - 140 },
+            lineSpacing: 6,
+          })
+          .setOrigin(0.5)
+      );
+
+      if (safeActions.length) {
+        if (safeActions.length >= 2) {
+          bodyText.setVisible(false);
+
+          const cols = safeActions.length;
+          const contentW = panelW - 120;
+          const colW = contentW / cols;
+          const startX = -contentW / 2 + colW / 2;
+
+          const titleY = -panelH / 2 + 34;
+          const namesY = titleY + 80;
+          const buttonsY = namesY + 64;
+          const btnW = Math.min(160, colW - 16);
+          const btnH = 40;
+
+          for (let i = 0; i < cols; i++) {
+            const a = safeActions[i]!;
+            const x = startX + i * colW;
+
+            const nameText = sf0(
+              this.add
+                .text(x, namesY, a.label, {
+                  fontFamily: "system-ui, Segoe UI, sans-serif",
+                  fontSize: "16px",
+                  color: "#e2e8f0",
+                  fontStyle: "bold",
+                  align: "center",
+                  wordWrap: { width: colW - 18 },
+                })
+                .setOrigin(0.5)
+            );
+
+            const btnBg = sf0(
+              this.add
+                .rectangle(x, buttonsY, btnW, btnH, 0x2563eb, 0.98)
+                .setStrokeStyle(2, 0x93c5fd, 0.9)
+                .setInteractive({ useHandCursor: true })
+            );
+
+            const btnText = sf0(
+              this.add
+                .text(x, buttonsY, "Connect", {
+                  fontFamily: "system-ui, Segoe UI, sans-serif",
+                  fontSize: "15px",
+                  color: "#f8fafc",
+                  fontStyle: "bold",
+                  align: "center",
+                })
+                .setOrigin(0.5)
+            );
+
+            const open = () => window.open(a.url, "_blank", "noopener,noreferrer");
+            btnBg.on("pointerdown", open);
+            btnText.setInteractive({ useHandCursor: true }).on("pointerdown", open);
+
+            btnBg.on("pointerover", () => {
+              btnBg.setFillStyle(0x1d4ed8, 1);
+              btnBg.setStrokeStyle(2, 0xbfdbfe, 1);
+            });
+            btnBg.on("pointerout", () => {
+              btnBg.setFillStyle(0x2563eb, 0.98);
+              btnBg.setStrokeStyle(2, 0x93c5fd, 0.9);
+            });
+
+            parts.push(nameText, btnBg, btnText);
+          }
+        } else {
+          const a = safeActions[0]!;
+          const y = 78;
+          const btnW = Math.min(360, panelW - 120);
+          const btnH = 42;
+
+          const btnBg = sf0(
+            this.add
+              .rectangle(0, y, btnW, btnH, 0x2563eb, 0.98)
+              .setStrokeStyle(2, 0x93c5fd, 0.9)
+              .setInteractive({ useHandCursor: true })
+          );
+
+          const btnText = sf0(
+            this.add
+              .text(0, y, a.label, {
+                fontFamily: "system-ui, Segoe UI, sans-serif",
+                fontSize: "15px",
+                color: "#f8fafc",
+                fontStyle: "bold",
+                align: "center",
+              })
+              .setOrigin(0.5)
+          );
+
+          const open = () => window.open(a.url, "_blank", "noopener,noreferrer");
+          btnBg.on("pointerdown", open);
+          btnText.setInteractive({ useHandCursor: true }).on("pointerdown", open);
+
+          btnBg.on("pointerover", () => {
+            btnBg.setFillStyle(0x1d4ed8, 1);
+            btnBg.setStrokeStyle(2, 0xbfdbfe, 1);
+          });
+          btnBg.on("pointerout", () => {
+            btnBg.setFillStyle(0x2563eb, 0.98);
+            btnBg.setStrokeStyle(2, 0x93c5fd, 0.9);
+          });
+
+          parts.push(btnBg, btnText);
+        }
+      }
+
+      const closeText = sf0(
+        this.add
+          .text(0, panelH / 2 - 26, "Press E or ESC to close", {
+            fontFamily: "system-ui, Segoe UI, sans-serif",
+            fontSize: "14px",
+            color: "#94a3b8",
+            align: "center",
+          })
+          .setOrigin(0.5)
+      );
+
+      parts.push(titleText, bodyText, closeText);
     }
 
-    const bodyText = this.add
-      .text(0, hasImage ? 210 : -6, description, {
-        fontFamily: "system-ui, Segoe UI, sans-serif",
-        fontSize: "16px",
-        color: "#f3e7d5",
-        align: "center",
-        wordWrap: { width: hasImage ? 460 : 340 },
-        lineSpacing: 4,
-      })
-      .setOrigin(0.5);
-
-    const closeText = this.add
-      .text(0, hasImage ? 266 : 116, "Press E or ESC to close", {
-        fontFamily: "system-ui, Segoe UI, sans-serif",
-        fontSize: "14px",
-        color: "#d6b48a",
-        align: "center",
-      })
-      .setOrigin(0.5);
-
-    const parts: Phaser.GameObjects.GameObject[] = [overlay, panel, titleText];
-    if (posterImage) parts.push(posterImage);
-    parts.push(bodyText, closeText);
     container.add(parts);
     this.activePopup = container;
   }
@@ -634,8 +904,12 @@ export class MainScene extends Phaser.Scene {
       "Examples of software engineering roles, team workflows, and real-world development tools.",
     ];
 
-    let examplePosterUsed = false;
-    for (const p of booths) {
+    const themeCount = boothTitles.length;
+    const themeOrder = shuffleIndices(themeCount, rnd);
+    const uniquePosterSlots = Math.min(1 + themeCount + SPECIAL_POSTER_COUNT, booths.length);
+
+    for (let bi = 0; bi < booths.length; bi++) {
+      const p = booths[bi]!;
       const roll = rnd();
       const deskKey = roll < 0.4 ? DESK_S_TEX : roll < 0.78 ? DESK_M_TEX : DESK_L_TEX;
 
@@ -676,24 +950,53 @@ export class MainScene extends Phaser.Scene {
       this.npcs.push(npc);
 
       let hasPosterBoard = false;
-      if (rnd() < 0.55) {
-        const posterSide = rnd() < 0.5 ? -1 : 1;
-        const posterX = dx + posterSide * (deskKey === DESK_L_TEX ? 90 : 70);
+      let posterSideForBooth: number | undefined;
+      if (bi < uniquePosterSlots) {
+        posterSideForBooth = rnd() < 0.5 ? -1 : 1;
+        const posterX = dx + posterSideForBooth * (deskKey === DESK_L_TEX ? 90 : 70);
         const posterY = dy - 8;
 
-        const idx = Math.floor(rnd() * boothTitles.length);
         const poster = this.add.sprite(posterX, posterY, PROP_POSTER_BOARD_TEX);
         poster.setDepth(posterY - 10);
 
-        const isExample = !examplePosterUsed;
-        if (isExample) {
-          examplePosterUsed = true;
+        if (bi === 0) {
           poster.setData("imageKey", "posterExample");
           poster.setData("title", "Poster Example");
           poster.setData("description", "Example of a real poster image displayed in the popup.");
+        } else if (bi === SPONSOR_BOOTH_INDEX) {
+          poster.setData("title", "Vita Coco — sponsor information");
+          poster.setData(
+            "description",
+            "Vita Coco coconut water is one of our conference hydration sponsors. " +
+              "It is naturally a source of electrolytes like potassium, which supports everyday hydration. " +
+              "Attendees often reach for it when they want to feel refreshed—and for that post-coffee, post-catering reset people half-jokingly call their “deblotating” drink."
+          );
+        } else if (bi === CAHSI_BOOTH_INDEX) {
+          poster.setData("title", "Join the CAHSI Alliance");
+          poster.setData(
+            "description",
+            "The Computing Alliance of Hispanic-Serving Institutions (CAHSI) is a national network dedicated to helping students succeed in computer science and technology fields. " +
+              "By joining, you gain access to research opportunities, internships with top companies, mentorship from experienced professionals, and resources to prepare for graduate school.\n\n"
+          );
+          poster.setData("actionLabel", "More info");
+          poster.setData("actionUrl", "https://cahsi.utep.edu/");
+        } else if (bi === LINKEDIN_BOOTH_INDEX) {
+          poster.setData("title", "Connect with us on LinkedIn!");
+          
+          poster.setData("actions", [
+            { label: "Jonathan Conde", url: "https://www.linkedin.com/in/condejonathan/" },
+            { label: "Felipe Monsalvo", url: "https://www.linkedin.com/in/felipe-monsalvo/" },
+            { label: "Luis Palma", url: "https://www.linkedin.com/in/palmaluis/" },
+          ]);
         } else {
-          poster.setData("title", boothTitles[idx]);
-          poster.setData("description", boothDescriptions[idx]);
+          const specialsBefore =
+            (SPONSOR_BOOTH_INDEX > 0 && SPONSOR_BOOTH_INDEX < bi ? 1 : 0) +
+            (CAHSI_BOOTH_INDEX > 0 && CAHSI_BOOTH_INDEX < bi ? 1 : 0) +
+            (LINKEDIN_BOOTH_INDEX > 0 && LINKEDIN_BOOTH_INDEX < bi ? 1 : 0);
+          const themeSlot = bi - 1 - specialsBefore;
+          const themeIdx = themeOrder[themeSlot]!;
+          poster.setData("title", boothTitles[themeIdx]!);
+          poster.setData("description", boothDescriptions[themeIdx]!);
         }
         this.props.push(poster);
         this.posterBoards.push(poster);
@@ -743,6 +1046,66 @@ export class MainScene extends Phaser.Scene {
           this.props.push(pedestal);
         }
       }
+
+      if (bi === SPONSOR_BOOTH_INDEX && this.textures.exists(VITA_COCO_TEX)) {
+        const vy = dy + 44;
+        const floorLogoShadow = this.add.sprite(dx + 3, vy + 3, VITA_COCO_TEX);
+        floorLogoShadow.setOrigin(0.5, 0.25);
+        floorLogoShadow.setDepth(dy - 0.1);
+        floorLogoShadow.setScale(0.205);
+        floorLogoShadow.setTint(0x000000);
+        floorLogoShadow.setAlpha(0.28);
+        floorLogoShadow.setAngle(0);
+        this.props.push(floorLogoShadow);
+
+        const floorLogo = this.add.sprite(dx, vy, VITA_COCO_TEX);
+        floorLogo.setOrigin(0.5, 0.25);
+        floorLogo.setDepth(dy);
+        floorLogo.setScale(0.19);
+        floorLogo.setAlpha(0.82);
+        floorLogo.setAngle(0);
+        this.props.push(floorLogo);
+      }
+
+      if (bi === CAHSI_BOOTH_INDEX && this.textures.exists(CAHSI_TEX)) {
+        const vy = dy + 44;
+        const floorLogoShadow = this.add.sprite(dx + 3, vy + 3, CAHSI_TEX);
+        floorLogoShadow.setOrigin(0.5, 0.25);
+        floorLogoShadow.setDepth(dy - 0.1);
+        floorLogoShadow.setScale(0.054);
+        floorLogoShadow.setTint(0x000000);
+        floorLogoShadow.setAlpha(0.28);
+        floorLogoShadow.setAngle(0);
+        this.props.push(floorLogoShadow);
+
+        const floorLogo = this.add.sprite(dx, vy, CAHSI_TEX);
+        floorLogo.setOrigin(0.5, 0.25);
+        floorLogo.setDepth(dy);
+        floorLogo.setScale(0.05);
+        floorLogo.setAlpha(0.82);
+        floorLogo.setAngle(0);
+        this.props.push(floorLogo);
+      }
+
+      if (bi === LINKEDIN_BOOTH_INDEX && this.textures.exists(LINKEDIN_TEX)) {
+        const vy = dy + 44;
+        const floorLogoShadow = this.add.sprite(dx, vy, LINKEDIN_TEX);
+        floorLogoShadow.setOrigin(0.44, 0.43);
+        floorLogoShadow.setDepth(dy - 0.1);
+        floorLogoShadow.setScale(0.08);
+        floorLogoShadow.setTint(0x000000);
+        floorLogoShadow.setAlpha(0.22);
+        floorLogoShadow.setAngle(0);
+        this.props.push(floorLogoShadow);
+
+        const floorLogo = this.add.sprite(dx, vy, LINKEDIN_TEX);
+        floorLogo.setOrigin(0.44, 0.43);
+        floorLogo.setDepth(dy);
+        floorLogo.setScale(0.08);
+        floorLogo.setAlpha(0.92);
+        floorLogo.setAngle(0);
+        this.props.push(floorLogo);
+      }
     }
   }
  
@@ -755,6 +1118,17 @@ export class MainScene extends Phaser.Scene {
 
     this.createGeneratedTextures();
     this.setupWorldLayers();
+
+    if (this.pendingRemoteJoins.length) {
+      const queued = this.pendingRemoteJoins.slice();
+      this.pendingRemoteJoins.length = 0;
+      for (const p of queued) this.onPlayerJoined(p);
+    }
+    if (this.pendingRemoteSnapshot) {
+      const snap = this.pendingRemoteSnapshot;
+      this.pendingRemoteSnapshot = null;
+      this.applyRemoteSnapshot(snap);
+    }
 
     const pr = this.playRect();
     this.physics.world.setBounds(pr.x, pr.y, pr.w, pr.h);
@@ -799,12 +1173,11 @@ export class MainScene extends Phaser.Scene {
       this.remote.clear();
 
       this.remoteTargets.clear();
-      for (const bubble of this.remoteBubbles.values()) {
-        bubble.text.destroy();
+      for (const st of this.remoteBubbles.values()) {
+        this.clearChatStack(st);
       }
       this.remoteBubbles.clear();
-      this.localBubble?.text.destroy();
-      this.localBubble = undefined;
+      this.clearChatStack(this.localBubbleStack);
       for (const npc of this.npcs) npc.destroy();
       this.npcs = [];
 
@@ -819,10 +1192,6 @@ export class MainScene extends Phaser.Scene {
   }
 
   update(time: number, delta: number) {
-    const cam = this.cameras.main;
-    this.floorLayer.tilePositionX = cam.scrollX * 0.15;
-    this.floorLayer.tilePositionY = cam.scrollY * 0.12;
-
     let vx = 0;
     let vy = 0;
 
@@ -831,7 +1200,7 @@ export class MainScene extends Phaser.Scene {
 
     if (this.cursors.up.isDown || this.wasd.W.isDown) vy = -MOVE_SPEED;
     else if (this.cursors.down.isDown || this.wasd.S.isDown) vy = MOVE_SPEED;
-
+ 
     if (vx !== 0 && vy !== 0) {
       const f = MOVE_SPEED / Math.sqrt(vx * vx + vy * vy);
       vx *= f;
@@ -848,11 +1217,16 @@ export class MainScene extends Phaser.Scene {
       const ny = Phaser.Math.Linear(sprite.y, target.y, lerp);
       sprite.setPosition(nx, ny);
       sprite.setDepth(ny);
-      const bubble = this.remoteBubbles.get(socketId);
-      if (bubble) {
-        bubble.text.setPosition(nx, ny - 42);
-        if (this.time.now >= bubble.expiresAt) {
-          bubble.text.destroy();
+      const stack = this.remoteBubbles.get(socketId);
+      if (stack && stack.length) {
+        this.applyChatStackLayout(stack, () => ({ x: nx, y: ny - BUBBLE_BASE_OFF }));
+        const newest = stack[stack.length - 1]!;
+        if (this.time.now >= newest.expiresAt) {
+          this.destroyChatEntry(newest);
+          stack.pop();
+          this.applyChatStackLayout(stack, () => ({ x: nx, y: ny - BUBBLE_BASE_OFF }));
+        }
+        if (stack.length === 0) {
           this.remoteBubbles.delete(socketId);
         }
       }
@@ -860,11 +1234,19 @@ export class MainScene extends Phaser.Scene {
 
     const py = this.localPlayer.y;
     this.localPlayer.setDepth(py);
-    if (this.localBubble) {
-      this.localBubble.text.setPosition(this.localPlayer.x, this.localPlayer.y - 42);
-      if (this.time.now >= this.localBubble.expiresAt) {
-        this.localBubble.text.destroy();
-        this.localBubble = undefined;
+    if (this.localBubbleStack.length) {
+      this.applyChatStackLayout(this.localBubbleStack, () => ({
+        x: this.localPlayer.x,
+        y: this.localPlayer.y - BUBBLE_BASE_OFF,
+      }));
+      const newest = this.localBubbleStack[this.localBubbleStack.length - 1]!;
+      if (this.time.now >= newest.expiresAt) {
+        this.destroyChatEntry(newest);
+        this.localBubbleStack.pop();
+        this.applyChatStackLayout(this.localBubbleStack, () => ({
+          x: this.localPlayer.x,
+          y: this.localPlayer.y - BUBBLE_BASE_OFF,
+        }));
       }
     }
 
@@ -889,7 +1271,16 @@ export class MainScene extends Phaser.Scene {
           this.showPosterPopup(
             nearbyPoster.getData("title"),
             nearbyPoster.getData("description"),
-            nearbyPoster.getData("imageKey")
+            nearbyPoster.getData("imageKey"),
+            (nearbyPoster.getData("actions") as Array<{ label: string; url: string }> | undefined) ??
+              (nearbyPoster.getData("actionUrl")
+                ? [
+                    {
+                      label: nearbyPoster.getData("actionLabel") || "More info",
+                      url: nearbyPoster.getData("actionUrl"),
+                    },
+                  ]
+                : undefined)
           );
         }
       }
