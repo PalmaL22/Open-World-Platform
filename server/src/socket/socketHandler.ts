@@ -1,4 +1,6 @@
 import jwt from "jsonwebtoken";
+import fs from "node:fs/promises";
+import path from "node:path";
 import type { Server } from "socket.io";
 import { prisma } from "../lib/prisma.js";
 import { JWT_SECRET } from "../types/env.js";
@@ -7,6 +9,38 @@ const DEFAULT_CHARACTER_COLOR = "#3498db";
 const CHAT_HISTORY_LIMIT = 50;
 const CHAT_MAX_LENGTH = 300;
 const CHAT_MIN_INTERVAL_MS = 300;
+
+type BoothLayoutRecord = {
+  serverId: string;
+  layout: unknown;
+  updatedAt: string;
+};
+
+const boothLayouts = new Map<string, BoothLayoutRecord>();
+let boothLayoutsLoaded = false;
+const boothLayoutsFile = path.join(process.cwd(), "server", ".data", "boothLayouts.json");
+
+async function loadBoothLayoutsOnce() {
+  if (boothLayoutsLoaded) return;
+  boothLayoutsLoaded = true;
+  try {
+    const raw = await fs.readFile(boothLayoutsFile, "utf8");
+    const parsed = JSON.parse(raw) as { layouts?: BoothLayoutRecord[] };
+    for (const rec of parsed.layouts ?? []) {
+      if (rec?.serverId) {
+        boothLayouts.set(rec.serverId, rec);
+      }
+    }
+  } catch {
+  }
+}
+
+async function persistBoothLayouts() {
+  const dir = path.dirname(boothLayoutsFile);
+  await fs.mkdir(dir, { recursive: true });
+  const layouts = [...boothLayouts.values()];
+  await fs.writeFile(boothLayoutsFile, JSON.stringify({ layouts }, null, 2), "utf8");
+}
 
 export function registerSocketAuth(io: Server) {
   io.use((socket, next) => {
@@ -236,6 +270,16 @@ export function registerSocketHandlers(io: Server) {
           username: user.username,
           characterColor,
         });
+
+        await loadBoothLayoutsOnce();
+        const existingLayout = boothLayouts.get(serverId);
+        if (existingLayout) {
+          socket.emit("booths:layout", {
+            serverId,
+            layout: existingLayout.layout,
+            updatedAt: existingLayout.updatedAt,
+          });
+        }
         await emitChatHistory(serverId);
         await emitPlayersSnapshot(serverId);
         emitSystemMessage(serverId, `${user.username} joined the room`);
@@ -252,6 +296,39 @@ export function registerSocketHandlers(io: Server) {
         console.error(e);
         socket.emit("join-error", { message: "Could not join server" });
       }
+    });
+
+    socket.on("booths:layout:get", async (payload: { serverId?: string }) => {
+      const active = socket.data.serverId as string | undefined;
+      const serverId = payload?.serverId;
+      if (!active || !serverId || active !== serverId) return;
+      await loadBoothLayoutsOnce();
+      const rec = boothLayouts.get(serverId);
+      socket.emit("booths:layout", rec ? { serverId, layout: rec.layout, updatedAt: rec.updatedAt } : { serverId });
+    });
+
+    socket.on("booths:layout:set", async (payload: { serverId?: string; layout?: unknown }) => {
+      const active = socket.data.serverId as string | undefined;
+      const serverId = payload?.serverId;
+      if (!active || !serverId || active !== serverId) return;
+      const layout = payload?.layout;
+      if (!layout || typeof layout !== "object") return;
+
+      await loadBoothLayoutsOnce();
+      if (boothLayouts.has(serverId)) {
+        socket.emit("booths:layout:ack", { serverId, accepted: false });
+        return;
+      }
+
+      const rec: BoothLayoutRecord = { serverId, layout, updatedAt: new Date().toISOString() };
+      boothLayouts.set(serverId, rec);
+      try {
+        await persistBoothLayouts();
+      } catch (e) {
+        console.error("Failed to persist booth layouts", e);
+      }
+      io.to(roomForServer(serverId)).emit("booths:layout", { serverId, layout: rec.layout, updatedAt: rec.updatedAt });
+      socket.emit("booths:layout:ack", { serverId, accepted: true });
     });
 
     socket.on("leave-server", async (payload: { serverId: string }) => {

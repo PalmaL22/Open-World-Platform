@@ -10,9 +10,10 @@ type GameCanvasProps = {
   characterColor: string;
   remotePlayers: Array<{ socketId: string; color?: string; x?: number; y?: number }>;
   chatBubble?: { id: string; socketId: string; content: string } | null;
+  boothLayout?: unknown;
 };
 
-export function GameCanvas({ socket, serverId, characterColor, remotePlayers, chatBubble }: GameCanvasProps) {
+export function GameCanvas({ socket, serverId, characterColor, remotePlayers, chatBubble, boothLayout }: GameCanvasProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
 
@@ -57,6 +58,7 @@ export function GameCanvas({ socket, serverId, characterColor, remotePlayers, ch
       socket,
       serverId,
       localColorHex: characterColor,
+      boothLayout,
     });
     gameRef.current = game;
 
@@ -64,7 +66,7 @@ export function GameCanvas({ socket, serverId, characterColor, remotePlayers, ch
       gameRef.current = null;
       game.destroy(true);
     };
-  }, [socket, serverId, characterColor]);
+  }, [socket, serverId, characterColor, boothLayout]);
 
   useLayoutEffect(() => {
     const game = gameRef.current;
